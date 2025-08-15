@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>.lys 歌词顺序编辑器</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans', Arial, 'PingFang SC', 'Hiragino Sans GB', sans-serif; color: #222; }
+    header { padding: 12px 16px; background: #f6f7f9; border-bottom: 1px solid #e9eaee; }
+    h1 { margin: 0 0 8px 0; font-size: 20px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .controls input[type=file] { padding: 4px; }
+    .controls button { padding: 6px 10px; border: 1px solid #ddd; background: #fff; border-radius: 6px; cursor: pointer; }
+    .controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+    main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
+    .panel { border: 1px solid #e9eaee; border-radius: 8px; padding: 12px; background: #fff; }
+    #lines { display: flex; flex-direction: column; gap: 8px; }
+    .line { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px; border: 1px dashed #ddd; border-radius: 6px; }
+    .line.meta { background: #fafafa; }
+    .prefix { color: #999; margin-right: 6px; }
+    .tok { display: inline-block; padding: 2px 6px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; user-select: none; }
+    .tok:hover { border-color: #bbb; }
+    .tok.selected { background: #fbf0ff; border-color: #ba77ff; }
+    .tok.anchor { outline: 2px solid #0077ff; }
+    .tok.drop-before { box-shadow: -2px 0 0 0 #0077ff inset; }
+    .tok.drop-after { box-shadow:  2px 0 0 0 #0077ff inset; }
+    .box { background: #f8fbff; padding: 8px; border: 1px solid #e0eefc; border-radius: 6px; }
+    .actions { display: grid; gap: 8px; margin-top: 8px; }
+    #status { margin-top: 8px; color: #555; min-height: 1.4em; }
+    #docInfo { color: #555; margin-bottom: 8px; }
+    .footer { text-align: center; color: #999; font-size: 12px; padding: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>.lys 歌词顺序编辑器（Python 自带网页）</h1>
+    <div class="controls">
+      <input type="file" id="fileInput" accept=".lys,.lrc,.txt" />
+      <button id="btnImport">导入 .lys</button>
+      <button id="btnUndo" disabled>撤销</button>
+      <button id="btnRedo" disabled>重做</button>
+      <button id="btnExport" disabled>导出 .lys</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>文档</h2>
+      <div id="docInfo"></div>
+      <div id="lines"></div>
+    </section>
+
+    <section class="panel">
+      <h2>选区与目标</h2>
+      <div class="box">
+        <p><strong>多选：</strong>按住 Ctrl/⌘ 点击多个 token；再次点击可取消选择。</p>
+        <p><strong>锚点：</strong>不按修饰键，单击某个 token 将其设为锚点（蓝框）。</p>
+        <p>然后选择“在锚点之前/之后”或“新建行并粘贴”。</p>
+      </div>
+      <div class="actions">
+        <div>
+          <button id="btnBefore" disabled>在锚点<strong>之前</strong>插入</button>
+          <button id="btnAfter" disabled>在锚点<strong>之后</strong>插入</button>
+        </div>
+        <div>
+          <button id="btnNewlineTop" disabled>新建行并粘贴（文档最前）</button>
+          <button id="btnNewlineAfter" disabled>新建行并粘贴（锚点行之后）</button>
+        </div>
+      </div>
+      <div id="status"></div>
+    </section>
+  </main>
+
+  <div class="footer">本页由 Python 后端直接提供，前端请求走同源，无需额外代理/端口。</div>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+
+    let state = {
+      doc: null,
+      selectedTokenIds: new Set(),
+      anchorTokenId: null,
+      anchorLineId: null,
+      dragging: false,
+      dragIds: null,
+    };
+
+    function setStatus(msg) {
+      $('#status').textContent = msg || '';
+    }
+
+    function renderDoc() {
+      const c = $('#lines');
+      c.innerHTML = '';
+      if (!state.doc) return;
+      $('#docInfo').textContent = `DocID: ${state.doc.id} — version: ${state.doc.version} — 行数: ${state.doc.lines.length}`;
+
+      state.doc.lines.forEach((line) => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'line' + (line.is_meta ? ' meta' : '');
+        lineDiv.dataset.lineId = line.id;
+
+        if (line.prefix) {
+          const pre = document.createElement('span');
+          pre.className = 'prefix';
+          pre.textContent = line.prefix;
+          lineDiv.appendChild(pre);
+        }
+
+        line.tokens.forEach((tok) => {
+          const span = document.createElement('span');
+          span.className = 'tok';
+          span.textContent = `[${tok.ts || '-'}] ${tok.text}`;
+          span.title = `tokenId=${tok.id}\nts=${tok.ts || ''}\ntext=${tok.text}`;
+          span.dataset.tokenId = tok.id;
+          span.dataset.lineId = line.id;
+
+          if (state.selectedTokenIds.has(tok.id)) span.classList.add('selected');
+          if (state.anchorTokenId === tok.id) span.classList.add('anchor');
+
+          span.addEventListener('click', (e) => {
+            const multi = e.metaKey || e.ctrlKey;
+            if (multi) {
+              if (state.selectedTokenIds.has(tok.id)) state.selectedTokenIds.delete(tok.id);
+              else state.selectedTokenIds.add(tok.id);
+            } else {
+              // 普通点击设定锚点
+              state.anchorTokenId = tok.id;
+              state.anchorLineId = line.id;
+            }
+            updateButtons();
+            renderDoc();
+          });
+
+          // 拖拽支持
+          span.draggable = true;
+          span.addEventListener('dragstart', (e) => {
+            // 如果当前拖拽的 token 不在已选中集合，则以该 token 作为拖拽集合
+            if (!state.selectedTokenIds.has(tok.id)) {
+              state.selectedTokenIds = new Set([tok.id]);
+              state.anchorTokenId = tok.id;
+              state.anchorLineId = line.id;
+              updateButtons();
+              // 不在 dragstart 里强制重渲染，避免闪烁
+            }
+            state.dragging = true;
+            state.dragIds = new Set(state.selectedTokenIds);
+            try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'move-tokens'); } catch {}
+          });
+          span.addEventListener('dragend', () => {
+            state.dragging = false;
+            state.dragIds = null;
+            // 清理可能残留的指示样式
+            document.querySelectorAll('.tok.drop-before, .tok.drop-after').forEach(el => {
+              el.classList.remove('drop-before', 'drop-after');
+            });
+          });
+          span.addEventListener('dragover', (e) => {
+            if (!state.dragging) return;
+            e.preventDefault();
+            // 根据鼠标在 token 内的水平位置判断前/后
+            const rect = e.currentTarget.getBoundingClientRect();
+            const leftHalf = (e.clientX - rect.left) < rect.width / 2;
+            e.currentTarget.classList.toggle('drop-before', leftHalf);
+            e.currentTarget.classList.toggle('drop-after', !leftHalf);
+          });
+          span.addEventListener('dragleave', (e) => {
+            e.currentTarget.classList.remove('drop-before', 'drop-after');
+          });
+          span.addEventListener('drop', async (e) => {
+            if (!state.dragging || !state.dragIds) return;
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            const kind = ((e.clientX - rect.left) < rect.width / 2) ? 'before' : 'after';
+            // 组装 payload 并调用 /api/move
+            const selectionRanges = groupSelectionIntoRanges(state.dragIds);
+            if (selectionRanges.length === 0) { setStatus('无可移动的选择'); return; }
+            const target = { type: 'anchor', line_id: line.id, anchor_token_id: tok.id, position: kind };
+            const payload = {
+              document_id: state.doc.id,
+              base_version: state.doc.version,
+              selection: selectionRanges,
+              target
+            };
+            try {
+              const res = await fetch('/api/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              if (!res.ok) {
+                const text = await res.text();
+                setStatus('移动失败：' + text);
+                return;
+              }
+              const doc = await res.json();
+              state.doc = doc;
+              state.selectedTokenIds.clear();
+              renderDoc();
+              setStatus('已完成拖拽移动。');
+            } finally {
+              document.querySelectorAll('.tok.drop-before, .tok.drop-after').forEach(el => {
+                el.classList.remove('drop-before', 'drop-after');
+              });
+              state.dragging = false;
+              state.dragIds = null;
+            }
+          });
+
+          lineDiv.appendChild(span);
+        });
+
+        c.appendChild(lineDiv);
+      });
+    }
+
+    function groupSelectionIntoRanges(idsOpt) {
+      if (!state.doc) return [];
+      const idToIndex = new Map();
+      state.doc.lines.forEach((line, li) => {
+        line.tokens.forEach((tok, ti) => {
+          idToIndex.set(tok.id, { li, ti, line_id: line.id });
+        });
+      });
+
+      const srcIds = idsOpt ? Array.from(idsOpt) : Array.from(state.selectedTokenIds);
+      const selected = srcIds
+        .map((id) => idToIndex.get(id))
+        .filter(Boolean)
+        .sort((a, b) => (a.li - b.li) || (a.ti - b.ti));
+
+      const ranges = [];
+      let i = 0;
+      while (i < selected.length) {
+        const { li, line_id } = selected[i];
+        let startTi = selected[i].ti;
+        let endTi = startTi;
+
+        let j = i + 1;
+        while (j < selected.length && selected[j].li === li && selected[j].ti === endTi + 1) {
+          endTi = selected[j].ti;
+          j++;
+        }
+        const line = state.doc.lines[li];
+        const start_token_id = line.tokens[startTi].id;
+        const end_token_id = line.tokens[endTi].id;
+        ranges.push({ line_id, start_token_id, end_token_id });
+        i = j;
+      }
+      return ranges;
+    }
+
+    async function importLys(file) {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/import', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || '导入失败');
+      }
+      const doc = await res.json();
+      state.doc = doc;
+      state.selectedTokenIds.clear();
+      state.anchorTokenId = null;
+      updateButtons();
+      renderDoc();
+      $('#btnExport').disabled = false;
+      $('#btnUndo').disabled = false;
+      $('#btnRedo').disabled = false;
+    }
+
+    async function exportLys() {
+      const params = new URLSearchParams({ doc_id: state.doc.id });
+      const res = await fetch('/api/export?' + params.toString(), { method: 'GET' });
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'edited.lys';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function buildTarget(type, positionOpt) {
+      if (type === 'anchor') {
+        if (!state.anchorTokenId || !state.anchorLineId) return null;
+        return { type: 'anchor', line_id: state.anchorLineId, anchor_token_id: state.anchorTokenId, position: positionOpt };
+      } else if (type === 'newline') {
+        return { type: 'newline', insert_after_line_id: positionOpt === 'afterLine' ? state.anchorLineId : null };
+      }
+      return null;
+    }
+
+    async function doMove(kind) {
+      if (!state.doc) return;
+      const selectionRanges = groupSelectionIntoRanges();
+      if (selectionRanges.length === 0) {
+        setStatus('请先选择要移动的 token（可 Ctrl/⌘ 多选）');
+        return;
+      }
+
+      let target = null;
+      if (kind === 'before' || kind === 'after') {
+        target = buildTarget('anchor', kind);
+      } else if (kind === 'newlineTop') {
+        target = buildTarget('newline', 'top');
+      } else if (kind === 'newlineAfterLine') {
+        target = buildTarget('newline', 'afterLine');
+      }
+      if (!target) {
+        setStatus('请先选择锚点 token。');
+        return;
+      }
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        selection: selectionRanges,
+        target: target
+      };
+
+      const res = await fetch('/api/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('移动失败：' + text);
+        return;
+      }
+      const doc = await res.json();
+      state.doc = doc;
+      state.selectedTokenIds.clear();
+      renderDoc();
+      setStatus('已完成移动。');
+    }
+
+    async function undo() {
+      const params = new URLSearchParams({ doc_id: state.doc.id });
+      const res = await fetch('/api/undo?' + params.toString(), { method: 'POST' });
+      if (!res.ok) { setStatus('无法撤销'); return; }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+    }
+
+    async function redo() {
+      const params = new URLSearchParams({ doc_id: state.doc.id });
+      const res = await fetch('/api/redo?' + params.toString(), { method: 'POST' });
+      if (!res.ok) { setStatus('无法重做'); return; }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+    }
+
+    function updateButtons() {
+      const hasDoc = !!state.doc;
+      const hasAnchor = !!state.anchorTokenId;
+      const hasSel = state.selectedTokenIds.size > 0;
+
+      $('#btnBefore').disabled = !(hasDoc && hasAnchor && hasSel);
+      $('#btnAfter').disabled = !(hasDoc && hasAnchor && hasSel);
+      $('#btnNewlineTop').disabled = !(hasDoc && hasSel);
+      $('#btnNewlineAfter').disabled = !(hasDoc && hasSel && hasAnchor);
+
+      $('#btnExport').disabled = !hasDoc;
+      $('#btnUndo').disabled = !hasDoc;
+      $('#btnRedo').disabled = !hasDoc;
+    }
+
+    function init() {
+      $('#btnImport').addEventListener('click', async () => {
+        const f = $('#fileInput').files[0];
+        if (!f) { setStatus('请选择一个 .lys 文件'); return; }
+        try {
+          await importLys(f);
+          setStatus('导入成功。');
+        } catch (e) {
+          setStatus(String(e));
+        }
+      });
+
+      $('#btnExport').addEventListener('click', exportLys);
+      $('#btnUndo').addEventListener('click', undo);
+      $('#btnRedo').addEventListener('click', redo);
+
+      $('#btnBefore').addEventListener('click', () => doMove('before'));
+      $('#btnAfter').addEventListener('click', () => doMove('after'));
+      $('#btnNewlineTop').addEventListener('click', () => doMove('newlineTop'));
+      $('#btnNewlineAfter').addEventListener('click', () => doMove('newlineAfterLine'));
+
+      // 点击空白处清空选择与锚点
+      $('#lines').addEventListener('click', (e) => {
+        if (e.target.classList.contains('tok')) return;
+        state.selectedTokenIds.clear();
+        state.anchorTokenId = null;
+        state.anchorLineId = null;
+        renderDoc();
+        updateButtons();
+      });
+
+      updateButtons();
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

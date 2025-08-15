@@ -1,0 +1,342 @@
+# app.py
+# 单文件后端：提供 .lys 解析/移动/导出 API，并直出 index.html 网页
+# 依赖：pip install fastapi uvicorn python-multipart
+
+import os
+import re
+import json
+import uuid
+import copy
+from typing import Any, Dict, List, Tuple, Optional
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="Lys Lyrics Editor", version="0.1.0")
+
+# 同源访问即可；如果你单独部署 HTML，也可以在这里放开 CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 按需收紧
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# =========================
+# 内存数据库与工具
+# =========================
+
+DB_DOCS: Dict[str, Dict[str, Any]] = {}          # 文档
+UNDO_STACK: Dict[str, List[Dict[str, Any]]] = {} # 撤销栈
+REDO_STACK: Dict[str, List[Dict[str, Any]]] = {} # 重做栈
+
+def new_id() -> str:
+    return uuid.uuid4().hex
+
+def deep_clone(obj):
+    return copy.deepcopy(obj)
+
+# =========================
+# .lys 解析与导出
+# =========================
+
+HEADER_PREFIX_RE = re.compile(r'^\[(ti|ar|al):', re.IGNORECASE)
+LINE_PREFIX_RE = re.compile(r'^\[(\d+)\]')
+# 支持半/全角括号：(…) 或 （…）
+TOKEN_RE = re.compile(r'(.*?)[(（](\d+),(\d+)[)）]')
+
+def parse_lys(raw_text: str) -> Dict[str, Any]:
+    """
+    将 .lys 文本解析为结构化文档：
+    文档：
+      {
+        "id": str,
+        "version": int,
+        "lines": [
+          {
+            "id": str,
+            "prefix": str,      # 例如 "[4]"，无则 ""
+            "is_meta": bool,    # [ti]/[ar]/[al] 或无法解析为token的整行
+            "tokens": [
+              { "id": str, "ts": "start,dur", "text": "文本" }
+            ]
+          }
+        ]
+      }
+    """
+    lines: List[Dict[str, Any]] = []
+    for raw_line in raw_text.splitlines():
+        s = raw_line.rstrip("\r\n")
+        if not s:
+            # 允许空歌词行
+            lines.append({
+                "id": new_id(),
+                "prefix": "",
+                "is_meta": False,
+                "tokens": []
+            })
+            continue
+
+        # 元信息行：原样保留
+        if HEADER_PREFIX_RE.match(s):
+            lines.append({
+                "id": new_id(),
+                "prefix": "",
+                "is_meta": True,
+                "tokens": [{"id": new_id(), "ts": "", "text": s}]
+            })
+            continue
+
+        # 行前缀（如 [4]）
+        prefix = ""
+        rest = s
+        m = LINE_PREFIX_RE.match(s)
+        if m:
+            prefix = m.group(0)
+            rest = s[m.end():]
+
+        # 解析 token：文本(开始,时长)
+        tokens: List[Dict[str, str]] = []
+        pos = 0
+        for m in TOKEN_RE.finditer(rest):
+            text = m.group(1)
+            start = m.group(2)
+            dur = m.group(3)
+            tokens.append({"id": new_id(), "ts": f"{start},{dur}", "text": text})
+            pos = m.end()
+
+        if tokens:
+            lines.append({
+                "id": new_id(),
+                "prefix": prefix,
+                "is_meta": False,
+                "tokens": tokens
+            })
+        else:
+            # 没解析出 token，则整行作为 meta 文本保存（不带时间戳）
+            lines.append({
+                "id": new_id(),
+                "prefix": "",
+                "is_meta": True,
+                "tokens": [{"id": new_id(), "ts": "", "text": s}]
+            })
+
+    return {"id": new_id(), "version": 0, "lines": lines}
+
+def dump_lys(doc: Dict[str, Any]) -> str:
+    """
+    将结构化文档导回 .lys 文本。
+    - meta 行：拼接其 tokens 的 text（通常只有一个）；
+    - 歌词行：prefix + 每个 token："text(ts)"
+    """
+    out_lines: List[str] = []
+    for line in doc["lines"]:
+        if line.get("is_meta"):
+            if line["tokens"]:
+                out_lines.append("".join(tok["text"] for tok in line["tokens"]))
+            else:
+                out_lines.append("")
+            continue
+
+        buf = [line["prefix"]] if line.get("prefix") else []
+        for tok in line["tokens"]:
+            ts = tok.get("ts", "")
+            text = tok.get("text", "")
+            if ts:
+                buf.append(f"{text}({ts})")
+            else:
+                buf.append(text)
+        out_lines.append("".join(buf))
+    return "\n".join(out_lines)
+
+# =========================
+# 移动算法
+# =========================
+
+class MoveError(Exception):
+    pass
+
+def find_line(doc: Dict[str, Any], line_id: str) -> Tuple[int, Dict[str, Any]]:
+    for i, ln in enumerate(doc["lines"]):
+        if ln["id"] == line_id:
+            return i, ln
+    raise MoveError(f"line not found: {line_id}")
+
+def find_token_index(line: Dict[str, Any], token_id: str) -> int:
+    for i, tok in enumerate(line["tokens"]):
+        if tok["id"] == token_id:
+            return i
+    raise MoveError(f"token not found in line {line['id']}: {token_id}")
+
+def normalize_selection(doc: Dict[str, Any], selection: List[Dict[str, str]]) -> List[Tuple[int,int,Dict[str,str]]]:
+    """
+    selection: [{ line_id, start_token_id, end_token_id }, ...]
+    返回（line_index, token_index, token）的有序列表
+    """
+    collected: List[Tuple[int,int,Dict[str,str]]] = []
+    for rng in selection:
+        li, line = find_line(doc, rng["line_id"])
+        a = find_token_index(line, rng["start_token_id"])
+        b = find_token_index(line, rng["end_token_id"])
+        if a > b:
+            a, b = b, a
+        for ti in range(a, b + 1):
+            collected.append((li, ti, line["tokens"][ti]))
+    collected.sort(key=lambda t: (t[0], t[1]))
+    return collected
+
+def apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: Dict[str, Any], delete_empty_lines: bool = True) -> None:
+    """
+    target:
+      - {"type":"anchor","line_id":...,"anchor_token_id":...,"position":"before"|"after"}
+      - {"type":"newline","insert_after_line_id": <line_id | None>}
+    """
+    if not selection:
+        return
+
+    # 1) 展开选择
+    collected = normalize_selection(doc, selection)
+    if not collected:
+        return
+    selected_ids = {tok["id"] for _, _, tok in collected}
+
+    # 2) 从源行删除（后到前）
+    by_line: Dict[int, List[int]] = {}
+    for li, ti, _ in collected:
+        by_line.setdefault(li, []).append(ti)
+    for li, idxs in sorted(by_line.items(), key=lambda kv: kv[0], reverse=True):
+        line = doc["lines"][li]
+        for ti in sorted(idxs, reverse=True):
+            del line["tokens"][ti]
+
+    # 3) 定位目标
+    if target.get("type") == "anchor":
+        t_li, t_line = find_line(doc, target["line_id"])
+        anchor_idx = find_token_index(t_line, target["anchor_token_id"])
+        if t_line["tokens"][anchor_idx]["id"] in selected_ids:
+            raise MoveError("anchor token is within the selection")
+        insert_at = anchor_idx if target.get("position") == "before" else anchor_idx + 1
+
+    elif target.get("type") == "newline":
+        # 新建空行
+        new_line = {"id": new_id(), "prefix": "", "is_meta": False, "tokens": []}
+        after_id = target.get("insert_after_line_id")
+        if after_id:
+            idx, _ = find_line(doc, after_id)
+            doc["lines"].insert(idx + 1, new_line)
+            t_li, t_line = idx + 1, new_line
+        else:
+            doc["lines"].insert(0, new_line)
+            t_li, t_line = 0, new_line
+        insert_at = 0
+    else:
+        raise MoveError("invalid target type")
+
+    # 4) 粘贴（保持原顺序，时间戳随 token 一起移动）
+    moving_tokens: List[Dict[str,str]] = [tok for _, _, tok in collected]
+    for offset, tok in enumerate(moving_tokens):
+        t_line["tokens"].insert(insert_at + offset, tok)
+
+    # 5) 清理空行（不删 meta 行）
+    if delete_empty_lines:
+        doc["lines"] = [ln for ln in doc["lines"] if (ln.get("is_meta") or len(ln["tokens"]) > 0)]
+
+# =========================
+# 路由：网页与 API
+# =========================
+
+@app.get("/", response_class=HTMLResponse)
+def serve_index():
+    # 读取同目录下 index.html 并返回
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "index.html")
+    if not os.path.exists(path):
+        return HTMLResponse("<h1>index.html 未找到</h1>", status_code=404)
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        return HTMLResponse(f.read(), status_code=200)
+
+@app.post("/api/import")
+async def api_import(file: UploadFile = File(...)):
+    raw_bytes = await file.read()
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except Exception:
+        raw = raw_bytes.decode("utf-8", errors="ignore")
+    doc = parse_lys(raw)
+    DB_DOCS[doc["id"]] = doc
+    UNDO_STACK[doc["id"]] = []
+    REDO_STACK[doc["id"]] = []
+    return doc
+
+@app.get("/api/lyrics")
+def api_get(doc_id: str):
+    doc = DB_DOCS.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    return doc
+
+@app.get("/api/export", response_class=PlainTextResponse)
+def api_export(doc_id: str):
+    doc = DB_DOCS.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    text = dump_lys(doc)
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+@app.post("/api/move")
+def api_move(payload: Dict[str, Any] = Body(...)):
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    selection = payload.get("selection") or []
+    target = payload.get("target") or {}
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    before = deep_clone(doc)
+    try:
+        apply_move(doc, selection, target)
+    except MoveError as e:
+        raise HTTPException(409, str(e))
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
+@app.post("/api/undo")
+def api_undo(doc_id: str):
+    stack = UNDO_STACK.get(doc_id) or []
+    if not stack:
+        raise HTTPException(400, "nothing to undo")
+    curr = DB_DOCS[doc_id]
+    prev = stack.pop()
+    REDO_STACK[doc_id].append(deep_clone(curr))
+    DB_DOCS[doc_id] = prev
+    return prev
+
+@app.post("/api/redo")
+def api_redo(doc_id: str):
+    stack = REDO_STACK.get(doc_id) or []
+    if not stack:
+        raise HTTPException(400, "nothing to redo")
+    curr = DB_DOCS[doc_id]
+    nxt = stack.pop()
+    UNDO_STACK[doc_id].append(deep_clone(curr))
+    DB_DOCS[doc_id] = nxt
+    return nxt
+
+# 健康检查
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+if __name__ == "__main__":
+    import uvicorn
+    # 监听 0.0.0.0 以便同局域网其它设备访问；按需修改 port
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
