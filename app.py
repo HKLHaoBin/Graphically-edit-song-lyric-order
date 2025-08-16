@@ -184,6 +184,13 @@ def apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: Dic
             doc["lines"].insert(0, new_line)
             t_line = new_line
             insert_at = 0
+    elif target.get("type") == "line":
+        # 直接按行的头/尾插入（适配对空行的放置）
+        t_li, t_line = find_line(doc, target["line_id"])
+        pos = target.get("position", "end")
+        if pos not in ("start", "end"):
+            raise MoveError("invalid line position")
+        insert_at = 0 if pos == "start" else len(t_line["tokens"])
     else:
         raise MoveError("invalid target type")
 
@@ -281,6 +288,121 @@ def api_redo(doc_id: str):
     UNDO_STACK[doc_id].append(deep_clone(curr))
     DB_DOCS[doc_id] = nxt
     return nxt
+
+# ===== 额外编辑操作：新建空行 / 设置前缀 / 插入（粘贴）tokens =====
+@app.post("/api/newline")
+def api_newline(payload: Dict[str, Any] = Body(...)):
+    """
+    在指定行之后插入一个空的歌词行（非 meta）。
+    payload: { document_id, base_version, insert_after_line_id? }
+    若 insert_after_line_id 为空，则在文档开头插入。
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    after_id = payload.get("insert_after_line_id")
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    before = deep_clone(doc)
+    # 构造新行并插入
+    new_line = {"id": new_id(), "prefix": "", "is_meta": False, "tokens": []}
+    if after_id:
+        idx, _ = find_line(doc, after_id)
+        doc["lines"].insert(idx + 1, new_line)
+    else:
+        doc["lines"].insert(0, new_line)
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
+@app.post("/api/set_prefix")
+def api_set_prefix(payload: Dict[str, Any] = Body(...)):
+    """
+    设置歌词行左侧的 [int] 前缀。payload: { document_id, base_version, line_id, prefix_int|null }
+    prefix_int 为 None 或 "" 时，清空前缀；否则设置为 f"[{int}]"。
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    prefix_int = payload.get("prefix_int")
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    li, line = find_line(doc, line_id)
+    if line.get("is_meta"):
+        raise HTTPException(400, "cannot set prefix for meta line")
+
+    before = deep_clone(doc)
+    if prefix_int is None or str(prefix_int) == "":
+        line["prefix"] = ""
+    else:
+        try:
+            n = int(prefix_int)
+        except Exception:
+            raise HTTPException(400, "prefix_int must be an integer or empty")
+        if n < 0:
+            raise HTTPException(400, "prefix_int must be >= 0")
+        line["prefix"] = f"[{n}]"
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
+@app.post("/api/insert_tokens")
+def api_insert_tokens(payload: Dict[str, Any] = Body(...)):
+    """
+    在指定行的指定位置插入一组 tokens（粘贴用）。
+    payload: {
+      document_id, base_version,
+      line_id, insert_at: int,
+      tokens: [ {text: str, ts: str}, ... ]
+    }
+    服务器会为新 tokens 生成新的 id，保留原文本与时间戳。
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    insert_at = payload.get("insert_at")
+    tokens = payload.get("tokens") or []
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    li, line = find_line(doc, line_id)
+    if line.get("is_meta"):
+        raise HTTPException(400, "cannot insert tokens into meta line")
+    if not isinstance(insert_at, int) or insert_at < 0 or insert_at > len(line["tokens"]):
+        raise HTTPException(400, "invalid insert_at")
+
+    before = deep_clone(doc)
+    new_tokens = []
+    for t in tokens:
+        text = (t or {}).get("text", "")
+        ts = (t or {}).get("ts", "")
+        new_tokens.append({"id": new_id(), "ts": ts, "text": text})
+
+    # 插入
+    for offset, tok in enumerate(new_tokens):
+        line["tokens"].insert(insert_at + offset, tok)
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
 
 @app.get("/health")
 def health():

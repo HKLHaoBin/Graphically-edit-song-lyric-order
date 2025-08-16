@@ -5,31 +5,163 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>.lys 歌词顺序编辑器（拖放版）</title>
   <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
+      --primary: #2563eb;
+      --primary-600: #1d4ed8;
+      --primary-50: #eff6ff;
+      --accent: #8b5cf6;
+      --accent-50: #f5f3ff;
+      --radius: 10px;
+      --radius-sm: 8px;
+      --radius-xs: 6px;
+      --token: #f9fafb;
+      --token-border: #e5e7eb;
+      --token-hover: #eef2ff;
+      --token-selected: #f3e8ff;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f15;
+        --card: #0f1722;
+        --text: #e5e7eb;
+        --muted: #9aa4b2;
+        --border: #1f2937;
+        --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.45);
+        --primary: #3b82f6;
+        --primary-600: #2563eb;
+        --primary-50: #0b1220;
+        --accent: #a78bfa;
+        --accent-50: #141327;
+        --token: #0f1722;
+        --token-border: #1f2937;
+        --token-hover: #111827;
+        --token-selected: #18122b;
+      }
+    }
+
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans', Arial, 'PingFang SC', 'Hiragino Sans GB', sans-serif; color: #222; }
-    header { padding: 12px 16px; background: #f6f7f9; border-bottom: 1px solid #e9eaee; }
-    h1 { margin: 0 0 8px 0; font-size: 20px; }
-    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .controls input[type=file] { padding: 4px; }
-    .controls button { padding: 6px 10px; border: 1px solid #ddd; background: #fff; border-radius: 6px; cursor: pointer; }
-    .controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-    main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; }
-    .panel { border: 1px solid #e9eaee; border-radius: 8px; padding: 12px; background: #fff; }
-    #lines { display: flex; flex-direction: column; gap: 8px; }
-    .line { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px; border: 1px dashed #ddd; border-radius: 6px; }
-    .line.meta { background: #fafafa; }
-    .prefix { color: #999; margin-right: 6px; }
-    .tok { display: inline-block; padding: 4px 8px; border: 1px solid #ddd; border-radius: 6px; cursor: grab; user-select: none; }
-    .tok:active { cursor: grabbing; }
-    .tok:hover { border-color: #bbb; }
-    .tok.selected { background: #fbf0ff; border-color: #ba77ff; }
-    .tok.anchor { outline: 2px solid #0077ff; }
-    .tok.drop-left { box-shadow: -2px 0 0 0 #0a7cff inset; }
-    .tok.drop-right { box-shadow:  2px 0 0 0 #0a7cff inset; }
-    .box { background: #f8fbff; padding: 8px; border: 1px solid #e0eefc; border-radius: 6px; }
-    #status { margin-top: 8px; color: #555; min-height: 1.4em; }
-    #docInfo { color: #555; margin-bottom: 8px; }
-    .muted { color: #777; font-size: 12px; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans', Arial, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+      color: var(--text);
+      background: radial-gradient(1200px 800px at 10% -10%, rgba(37,99,235,0.05), transparent 40%),
+                  radial-gradient(900px 600px at 100% 0%, rgba(139,92,246,0.06), transparent 45%),
+                  var(--bg);
+    }
+
+    header {
+      position: sticky; top: 0; z-index: 20;
+      padding: 14px 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.75)) no-repeat,
+                  var(--card);
+      backdrop-filter: saturate(1.2) blur(6px);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+    @media (prefers-color-scheme: dark) {
+      header { background: linear-gradient(180deg, rgba(15,23,34,0.8), rgba(15,23,34,0.75)) no-repeat, var(--card); }
+    }
+
+    h1 { margin: 0 0 10px 0; font-size: 20px; font-weight: 650; letter-spacing: 0.2px; }
+
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .controls input[type=file] {
+      padding: 6px 8px; border: 1px dashed var(--border); border-radius: var(--radius-xs);
+      background: var(--card); color: var(--muted);
+    }
+    .controls button {
+      padding: 8px 12px; border: 1px solid var(--border); background: var(--card);
+      border-radius: var(--radius); cursor: pointer; color: var(--text);
+      transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .06s ease;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+    }
+    .controls button:hover { border-color: #cbd5e1; box-shadow: 0 4px 10px rgba(2,6,23,0.05); }
+    .controls button:active { transform: translateY(1px); }
+    .controls button:disabled { opacity: 0.6; cursor: not-allowed; }
+    /* Primary emphasis */
+    #btnImport, #btnExport {
+      background: linear-gradient(180deg, var(--primary), var(--primary-600));
+      color: #fff; border-color: transparent; box-shadow: 0 6px 18px rgba(37,99,235,0.25);
+    }
+    #btnImport:hover, #btnExport:hover { box-shadow: 0 8px 22px rgba(37,99,235,0.3); }
+    #btnImport:disabled, #btnExport:disabled { background: #aab4c6; box-shadow: none; }
+
+    main {
+      display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; padding: 18px; max-width: 1200px; margin: 0 auto;
+    }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .panel > h2 { margin: 2px 0 10px; font-size: 16px; color: var(--muted); font-weight: 600; }
+
+    #docInfo { color: var(--muted); margin-bottom: 10px; font-size: 13px; }
+
+    #lines { display: flex; flex-direction: column; gap: 10px; }
+
+    .line {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--card) 92%, transparent);
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    .line:hover { border-color: #cbd5e1; box-shadow: 0 2px 10px rgba(2,6,23,0.04); }
+    .line.meta { background: var(--primary-50); border-style: solid; }
+
+    .prefix { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+    .tok {
+      display: inline-block; padding: 6px 10px; border: 1px solid var(--token-border);
+      border-radius: 999px; cursor: grab; user-select: none;
+      background: var(--token); color: var(--text);
+      transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .06s ease;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+      outline: none;
+    }
+    .tok:hover { border-color: #c7d2fe; background: var(--token-hover); }
+    .tok:active { cursor: grabbing; transform: translateY(1px); }
+    .tok.selected {
+      background: var(--token-selected);
+      border-color: #c084fc;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+    }
+    .tok.anchor { outline: 2px solid var(--primary); }
+    .tok:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent); }
+
+    .tok.drop-left { box-shadow: -3px 0 0 0 var(--primary) inset, 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+    .tok.drop-right { box-shadow:  3px 0 0 0 var(--primary) inset, 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+
+    .box { background: linear-gradient(180deg, var(--accent-50), transparent 80%); padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    #status { margin-top: 10px; color: var(--muted); min-height: 1.4em; font-size: 13px; }
+    .muted { color: var(--muted); font-size: 12px; }
+
+    /* Smooth scrollbars */
+    ::-webkit-scrollbar { height: 10px; width: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* Line drop highlight */
+    .line.drop-left { box-shadow: inset 4px 0 0 0 var(--primary); border-style: solid; }
+    .line.drop-right { box-shadow: inset -4px 0 0 0 var(--primary); border-style: solid; }
+    .line.selected { border-color: #93c5fd; background: color-mix(in srgb, var(--primary-50) 65%, var(--card)); }
+
+    /* Prefix editor */
+    .prefix-editor { width: 64px; min-width: 56px; padding: 4px 6px; border: 1px dashed var(--border); border-radius: 7px; background: var(--card); color: var(--text); text-align: center; font-variant-numeric: tabular-nums; }
+    .prefix-editor::placeholder { color: var(--muted); }
+    .prefix-editor:focus { outline: none; border-color: #cbd5e1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
   </style>
 </head>
 <body>
@@ -68,6 +200,8 @@
     let state = {
       doc: null,
       selectedTokenIds: new Set(),
+      selectedLineId: null, // 选中的整行（用于行级复制/粘贴）
+      clipboard: null,      // { tokens: [{text, ts}], fromLineId }
     };
 
     function setStatus(msg) {
@@ -84,8 +218,28 @@
         const lineDiv = document.createElement('div');
         lineDiv.className = 'line' + (line.is_meta ? ' meta' : '');
         lineDiv.dataset.lineId = line.id;
+        if (state.selectedLineId === line.id) lineDiv.classList.add('selected');
 
-        if (line.prefix) {
+        // 可编辑的前缀数字输入（仅非 meta 行）
+        if (!line.is_meta) {
+          const preWrap = document.createElement('div');
+          preWrap.className = 'prefix';
+          const input = document.createElement('input');
+          input.className = 'prefix-editor';
+          input.type = 'number';
+          input.placeholder = '[ ]';
+          const m = /\[(\d+)\]/.exec(line.prefix || '');
+          input.value = m ? m[1] : '';
+          input.title = '可编辑的前缀数字（留空为无前缀）';
+          input.addEventListener('click', (e) => { e.stopPropagation(); });
+          input.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') { await commitPrefix(line.id, input.value); }
+            e.stopPropagation();
+          });
+          input.addEventListener('blur', async () => { await commitPrefix(line.id, input.value); });
+          preWrap.appendChild(input);
+          lineDiv.appendChild(preWrap);
+        } else if (line.prefix) {
           const pre = document.createElement('span');
           pre.className = 'prefix';
           pre.textContent = line.prefix;
@@ -159,6 +313,39 @@
 
           lineDiv.appendChild(span);
         });
+
+        // 行级交互：选择行、行级拖放（到头/尾）、双击插入空行
+        if (!line.is_meta) {
+          lineDiv.addEventListener('click', (e) => {
+            if (e.target.classList.contains('tok') || e.target.classList.contains('prefix-editor')) return;
+            state.selectedTokenIds.clear();
+            state.selectedLineId = line.id;
+            renderDoc();
+          });
+
+          lineDiv.addEventListener('dblclick', async (e) => {
+            e.preventDefault();
+            await insertEmptyLineBelow(line.id);
+          });
+
+          lineDiv.addEventListener('dragover', (e) => {
+            if (!state.doc) return; e.preventDefault();
+            const rect = lineDiv.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            lineDiv.classList.toggle('drop-left', isLeft);
+            lineDiv.classList.toggle('drop-right', !isLeft);
+          });
+          lineDiv.addEventListener('dragleave', () => {
+            lineDiv.classList.remove('drop-left', 'drop-right');
+          });
+          lineDiv.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            const rect = lineDiv.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            lineDiv.classList.remove('drop-left', 'drop-right');
+            await doDropMoveLine({ lineId: line.id, position: isLeft ? 'start' : 'end' });
+          });
+        }
 
         c.appendChild(lineDiv);
       });
@@ -238,6 +425,112 @@
       setStatus('已完成拖放移动。');
     }
 
+    async function doDropMoveLine({ lineId, position }) {
+      if (!state.doc) return;
+      const selectionRanges = groupSelectionIntoRanges();
+      if (selectionRanges.length === 0) { setStatus('请先选择要移动的歌词块（可 Ctrl/⌘ 多选）'); return; }
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        selection: selectionRanges,
+        target: { type: 'line', line_id: lineId, position } // 'start' | 'end'
+      };
+      const res = await fetch('/api/move', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('移动失败：' + text); return; }
+      const doc = await res.json();
+      state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已完成拖放移动。');
+    }
+
+    async function insertEmptyLineBelow(afterLineId) {
+      const res = await fetch('/api/newline', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, insert_after_line_id: afterLineId })
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('插入空行失败：' + text); return; }
+      const doc = await res.json(); state.doc = doc; renderDoc(); setStatus('已插入空行。');
+    }
+
+    async function commitPrefix(lineId, value) {
+      if (!state.doc) return;
+      const v = String(value || '').trim();
+      const res = await fetch('/api/set_prefix', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, prefix_int: v === '' ? '' : v })
+      });
+      if (!res.ok) { return; }
+      const doc = await res.json(); state.doc = doc; renderDoc();
+    }
+
+    function collectSelectedTokens() {
+      if (!state.doc) return [];
+      const idToTok = new Map();
+      const order = [];
+      state.doc.lines.forEach((line, li) => {
+        line.tokens.forEach((tok, ti) => {
+          idToTok.set(tok.id, { tok, li, ti, line_id: line.id });
+          order.push({ id: tok.id, li, ti });
+        });
+      });
+      const arr = Array.from(state.selectedTokenIds).map(id => idToTok.get(id)).filter(Boolean);
+      arr.sort((a,b)=> (a.li-b.li)||(a.ti-b.ti));
+      return arr;
+    }
+
+    function handleCopy() {
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        const tokens = sels.map(s => ({ text: s.tok.text, ts: s.tok.ts }));
+        state.clipboard = { tokens, fromLineId: sels[0].line_id };
+        setStatus('已复制所选歌词块。');
+        return true;
+      }
+      if (state.selectedLineId) {
+        const line = state.doc.lines.find(ln => ln.id === state.selectedLineId);
+        if (line && !line.is_meta && line.tokens.length) {
+          const tokens = line.tokens.map(t => ({ text: t.text, ts: t.ts }));
+          state.clipboard = { tokens, fromLineId: line.id };
+          setStatus('已复制整行歌词。');
+          return true;
+        }
+      }
+      setStatus('没有可复制的内容');
+      return false;
+    }
+
+    async function handlePaste() {
+      if (!state.clipboard || !state.doc) { setStatus('剪贴板为空'); return; }
+      const items = state.clipboard.tokens || [];
+      if (items.length === 0) { setStatus('剪贴板为空'); return; }
+
+      // 优先：若选中了 token，则粘贴到其右边（取该行中选中的最右一个 token 索引+1）
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        const lineId = sels[0].line_id;
+        const line = state.doc.lines.find(ln => ln.id === lineId);
+        const lastTi = Math.max(...sels.filter(s=>s.line_id===lineId).map(s=>s.ti));
+        await insertTokens(lineId, lastTi + 1, items);
+        return;
+      }
+      // 否则：若选中行，则粘贴到该行最左
+      if (state.selectedLineId) {
+        await insertTokens(state.selectedLineId, 0, items);
+        return;
+      }
+      setStatus('请先选中一个目标（token或行）再粘贴');
+    }
+
+    async function insertTokens(lineId, insertAt, tokens) {
+      const res = await fetch('/api/insert_tokens', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, insert_at: insertAt, tokens })
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('粘贴失败：' + text); return; }
+      const doc = await res.json(); state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已粘贴。');
+    }
+
     // ---- 基础 API 调用（导入、导出、撤销、重做） ----
     async function importLys(file) {
       const fd = new FormData();
@@ -304,9 +597,19 @@
 
       // 点击空白处清空选择
       $('#lines').addEventListener('click', (e) => {
-        if (e.target.classList.contains('tok')) return;
+        if (e.target.classList.contains('tok') || e.target.classList.contains('prefix-editor')) return;
         state.selectedTokenIds.clear();
+        state.selectedLineId = null;
         renderDoc();
+      });
+
+      // 键盘复制/粘贴
+      document.addEventListener('keydown', async (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC')>=0;
+        const copyCombo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'c';
+        const pasteCombo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'v';
+        if (copyCombo) { e.preventDefault(); handleCopy(); }
+        if (pasteCombo) { e.preventDefault(); await handlePaste(); }
       });
     }
 
