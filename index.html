@@ -162,6 +162,15 @@
     .prefix-editor { width: 64px; min-width: 56px; padding: 4px 6px; border: 1px dashed var(--border); border-radius: 7px; background: var(--card); color: var(--text); text-align: center; font-variant-numeric: tabular-nums; }
     .prefix-editor::placeholder { color: var(--muted); }
     .prefix-editor:focus { outline: none; border-color: #cbd5e1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+    /* Playing highlight */
+    .tok.active {
+      background: #fef3c7; /* amber-100 */
+      border-color: #f59e0b; /* amber-500 */
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+    }
+    .line.playing {
+      outline: 2px solid rgba(245, 158, 11, 0.35);
+    }
   </style>
 </head>
 <body>
@@ -173,6 +182,9 @@
       <button id="btnUndo" disabled>撤销</button>
       <button id="btnRedo" disabled>重做</button>
       <button id="btnExport" disabled>导出 .lys</button>
+      <span style="flex:1"></span>
+      <input type="file" id="mediaInput" accept="audio/*,video/*" />
+      <button id="btnPlayPause" disabled>播放</button>
     </div>
   </header>
 
@@ -189,6 +201,7 @@
         <p>① <strong>Ctrl/⌘ 多选</strong>歌词块；或只选一个。</p>
         <p>② 把选中的块<strong>直接拖动</strong>到另一行的某个块上；根据鼠标落点在该块的左半/右半，决定插入到<strong>前面/后面</strong>。</p>
         <p class="muted">提示：页面不显示时间戳，但时间戳会随 token 一起移动；导出时时间戳会保留。</p>
+        <p>③ 可选加载 <strong>音频/视频</strong> 文件，点击「播放」或空格，歌词将按 (开始时间, 持续时长) 高亮；<strong>单击任意一行</strong>可从该行开始播放。</p>
       </div>
       <div id="status"></div>
     </section>
@@ -202,6 +215,16 @@
       selectedTokenIds: new Set(),
       selectedLineId: null, // 选中的整行（用于行级复制/粘贴）
       clipboard: null,      // { tokens: [{text, ts}], fromLineId }
+      // 播放相关
+      playback: {
+        usingMedia: false,
+        mediaEl: null,
+        playing: false,
+        rafId: 0,
+        clockStartEpoch: 0,
+        clockStartOffset: 0, // ms
+      },
+      tokenCache: [], // [{id, lineId, start, end, el}]
     };
 
     function setStatus(msg) {
@@ -214,6 +237,7 @@
       if (!state.doc) return;
       $('#docInfo').textContent = `DocID: ${state.doc.id} — version: ${state.doc.version} — 行数: ${state.doc.lines.length}`;
 
+      state.tokenCache = [];
       state.doc.lines.forEach((line) => {
         const lineDiv = document.createElement('div');
         lineDiv.className = 'line' + (line.is_meta ? ' meta' : '');
@@ -255,6 +279,20 @@
           span.dataset.tokenId = tok.id;
           span.dataset.lineId = line.id;
           span.draggable = !line.is_meta;  // meta 行不允许拖拽
+
+          // 解析时间戳（start,duration）
+          let sMs = null, dMs = null;
+          if (tok.ts && typeof tok.ts === 'string' && tok.ts.includes(',')) {
+            const parts = tok.ts.split(',');
+            sMs = parseInt(parts[0], 10);
+            dMs = parseInt(parts[1], 10);
+            if (!Number.isFinite(sMs) || !Number.isFinite(dMs)) { sMs = null; dMs = null; }
+          }
+          if (sMs != null && dMs != null) {
+            span.dataset.startMs = String(sMs);
+            span.dataset.durMs = String(dMs);
+            state.tokenCache.push({ id: tok.id, lineId: line.id, start: sMs, end: sMs + dMs, el: span });
+          }
 
           if (state.selectedTokenIds.has(tok.id)) span.classList.add('selected');
 
@@ -321,6 +359,8 @@
             state.selectedTokenIds.clear();
             state.selectedLineId = line.id;
             renderDoc();
+            // 单击行：从该行开始播放
+            startFromLine(line.id);
           });
 
           lineDiv.addEventListener('dblclick', async (e) => {
@@ -349,6 +389,8 @@
 
         c.appendChild(lineDiv);
       });
+      // 渲染后刷新一次高亮（保持播放中时 UI 同步）
+      updateHighlight(getNowMs());
     }
 
     // 将选中的 token ID 集合合并成若干个 [start_id, end_id] 的连续区间（逐行）
@@ -547,6 +589,8 @@
       $('#btnExport').disabled = false;
       $('#btnUndo').disabled = false;
       $('#btnRedo').disabled = false;
+      // 允许在无媒体文件时使用时钟播放
+      $('#btnPlayPause').disabled = false;
     }
 
     async function exportLys() {
@@ -579,6 +623,136 @@
       renderDoc();
     }
 
+    // ======== 播放器逻辑 ========
+    function ensureMediaEl() {
+      if (!state.playback.mediaEl) {
+        const v = document.createElement('video');
+        v.id = 'player';
+        v.controls = true; // 允许用户控制
+        v.style.maxWidth = '100%';
+        v.style.display = 'block';
+        v.style.marginTop = '10px';
+        // 放到用法面板下（更自然）
+        const panel = document.querySelectorAll('.panel')[1];
+        panel.appendChild(v);
+        state.playback.mediaEl = v;
+        // 当媒体播放/暂停时，同步按钮状态
+        v.addEventListener('play', () => { state.playback.playing = true; startLoop(); syncPlayButton(); });
+        v.addEventListener('pause', () => { state.playback.playing = false; stopLoop(); syncPlayButton(); });
+        v.addEventListener('seeked', () => { updateHighlight(getNowMs()); });
+        v.addEventListener('timeupdate', () => { updateHighlight(getNowMs()); });
+        v.addEventListener('ended', () => { state.playback.playing = false; stopLoop(); syncPlayButton(); });
+      }
+      return state.playback.mediaEl;
+    }
+
+    function loadMediaFile(file) {
+      const v = ensureMediaEl();
+      const url = URL.createObjectURL(file);
+      v.src = url;
+      v.load();
+      state.playback.usingMedia = true;
+      $('#btnPlayPause').disabled = false;
+      setStatus('已加载媒体：' + (file.name || '')); 
+    }
+
+    function getNowMs() {
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        return (state.playback.mediaEl.currentTime || 0) * 1000;
+      }
+      // 时钟模式
+      return state.playback.clockStartOffset + (state.playback.playing ? (performance.now() - state.playback.clockStartEpoch) : 0);
+    }
+
+    function play() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.play();
+      } else {
+        // 无媒体，使用时钟
+        state.playback.playing = true;
+        state.playback.clockStartEpoch = performance.now();
+        startLoop();
+        syncPlayButton();
+      }
+    }
+
+    function pause() {
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.pause();
+      } else {
+        // 时钟暂停
+        state.playback.clockStartOffset = getNowMs();
+        state.playback.playing = false;
+        stopLoop();
+        syncPlayButton();
+      }
+    }
+
+    function togglePlay() {
+      if (state.playback.playing) pause(); else play();
+    }
+
+    function seekMs(ms) {
+      ms = Math.max(0, ms|0);
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.currentTime = ms / 1000;
+      } else {
+        state.playback.clockStartOffset = ms;
+        if (state.playback.playing) state.playback.clockStartEpoch = performance.now();
+        updateHighlight(getNowMs());
+      }
+    }
+
+    function startFromLine(lineId) {
+      if (!state.doc) return;
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || !line.tokens || line.tokens.length === 0) return;
+      // 找到该行最早的 start
+      let minStart = Infinity;
+      for (const t of line.tokens) {
+        if (!t.ts) continue;
+        const [s, d] = String(t.ts).split(',').map(x=>parseInt(x,10));
+        if (Number.isFinite(s)) minStart = Math.min(minStart, s);
+      }
+      if (!Number.isFinite(minStart)) return;
+      seekMs(minStart);
+      // 若未播放则开始
+      if (!state.playback.playing) play();
+    }
+
+    function syncPlayButton() {
+      $('#btnPlayPause').textContent = state.playback.playing ? '暂停' : '播放';
+    }
+
+    function startLoop() {
+      cancelAnimationFrame(state.playback.rafId);
+      const loop = () => {
+        updateHighlight(getNowMs());
+        state.playback.rafId = requestAnimationFrame(loop);
+      };
+      state.playback.rafId = requestAnimationFrame(loop);
+    }
+
+    function stopLoop() {
+      cancelAnimationFrame(state.playback.rafId);
+    }
+
+    function updateHighlight(nowMs) {
+      // 高亮 token，及其所在行
+      const activeLines = new Set();
+      for (const item of state.tokenCache) {
+        const active = nowMs >= item.start && nowMs < item.end;
+        item.el.classList.toggle('active', !!active);
+        if (active) activeLines.add(item.lineId);
+      }
+      // 行级标记
+      document.querySelectorAll('.line').forEach(ln => {
+        const lid = ln.dataset.lineId;
+        ln.classList.toggle('playing', activeLines.has(lid));
+      });
+    }
+
     function init() {
       $('#btnImport').addEventListener('click', async () => {
         const f = $('#fileInput').files[0];
@@ -594,6 +768,11 @@
       $('#btnExport').addEventListener('click', exportLys);
       $('#btnUndo').addEventListener('click', undo);
       $('#btnRedo').addEventListener('click', redo);
+      $('#btnPlayPause').addEventListener('click', togglePlay);
+      $('#mediaInput').addEventListener('change', (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) loadMediaFile(f);
+      });
 
       // 点击空白处清空选择
       $('#lines').addEventListener('click', (e) => {
@@ -610,7 +789,12 @@
         const pasteCombo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'v';
         if (copyCombo) { e.preventDefault(); handleCopy(); }
         if (pasteCombo) { e.preventDefault(); await handlePaste(); }
+        // 空格 播放/暂停
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
       });
+
+      // 初始：若未加载媒体，也允许时钟播放（但需导入 doc 后才能播放）
+      $('#btnPlayPause').disabled = true;
     }
 
     document.addEventListener('DOMContentLoaded', init);
