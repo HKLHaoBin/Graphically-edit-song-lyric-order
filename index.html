@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>.lys 歌词顺序编辑器（拖放版）</title>
+  <!-- 可选：为跨域后端提供 API 基址，例如 https://your-backend.example.com -->
+  <meta name="api-base" content="" />
   <style>
     :root {
       --bg: #f5f7fb;
@@ -209,6 +211,10 @@
 
   <script>
     const $ = (sel) => document.querySelector(sel);
+    // API 基址（默认同源）。可在部署到 GitHub Pages 时，通过注入 window.API_BASE 或设置 <meta name="api-base" content="..."> 来指定后端域名。
+    const API_BASE = (window.API_BASE || (document.querySelector('meta[name="api-base"]')?.content || '')).replace(/\/$/, '');
+    const apiUrl = (path) => API_BASE + path;
+    const apiFetch = (path, init) => fetch(apiUrl(path), init);
 
     let state = {
       doc: null,
@@ -449,7 +455,7 @@
         }
       };
 
-      const res = await fetch('/api/move', {
+      const res = await apiFetch('/api/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -478,7 +484,7 @@
         selection: selectionRanges,
         target: { type: 'line', line_id: lineId, position } // 'start' | 'end'
       };
-      const res = await fetch('/api/move', {
+      const res = await apiFetch('/api/move', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       if (!res.ok) { const text = await res.text(); setStatus('移动失败：' + text); return; }
@@ -487,7 +493,7 @@
     }
 
     async function insertEmptyLineBelow(afterLineId) {
-      const res = await fetch('/api/newline', {
+      const res = await apiFetch('/api/newline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, insert_after_line_id: afterLineId })
       });
@@ -498,7 +504,7 @@
     async function commitPrefix(lineId, value) {
       if (!state.doc) return;
       const v = String(value || '').trim();
-      const res = await fetch('/api/set_prefix', {
+      const res = await apiFetch('/api/set_prefix', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, prefix_int: v === '' ? '' : v })
       });
@@ -565,7 +571,7 @@
     }
 
     async function insertTokens(lineId, insertAt, tokens) {
-      const res = await fetch('/api/insert_tokens', {
+      const res = await apiFetch('/api/insert_tokens', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, insert_at: insertAt, tokens })
       });
@@ -577,7 +583,7 @@
     async function importLys(file) {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/import', { method: 'POST', body: fd });
+      const res = await apiFetch('/api/import', { method: 'POST', body: fd });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || '导入失败');
@@ -595,7 +601,7 @@
 
     async function exportLys() {
       const params = new URLSearchParams({ doc_id: state.doc.id });
-      const res = await fetch('/api/export?' + params.toString(), { method: 'GET' });
+      const res = await apiFetch('/api/export?' + params.toString(), { method: 'GET' });
       const text = await res.text();
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const a = document.createElement('a');
@@ -607,7 +613,7 @@
 
     async function undo() {
       const params = new URLSearchParams({ doc_id: state.doc.id });
-      const res = await fetch('/api/undo?' + params.toString(), { method: 'POST' });
+      const res = await apiFetch('/api/undo?' + params.toString(), { method: 'POST' });
       if (!res.ok) { setStatus('无法撤销'); return; }
       const doc = await res.json();
       state.doc = doc;
@@ -616,7 +622,7 @@
 
     async function redo() {
       const params = new URLSearchParams({ doc_id: state.doc.id });
-      const res = await fetch('/api/redo?' + params.toString(), { method: 'POST' });
+      const res = await apiFetch('/api/redo?' + params.toString(), { method: 'POST' });
       if (!res.ok) { setStatus('无法重做'); return; }
       const doc = await res.json();
       state.doc = doc;

@@ -1,0 +1,51 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'index.html'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare frontend artifact
+        run: |
+          mkdir -p ./_site
+          cp -v index.html ./_site/index.html
+          # 可选：注入后端 API 基址（在仓库变量中设置 FRONTEND_API_BASE，例如 https://api.example.com）
+          if [ -n "${{ vars.FRONTEND_API_BASE }}" ]; then
+            # 用 sed 替换 <meta name="api-base" content="...">
+            sed -i "s|<meta name=\"api-base\" content=\"\" />|<meta name=\"api-base\" content=\"${{ vars.FRONTEND_API_BASE }}\" />|" ./_site/index.html || true
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
