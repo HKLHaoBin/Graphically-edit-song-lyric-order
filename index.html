@@ -258,7 +258,7 @@
           input.className = 'prefix-editor';
           input.type = 'number';
           input.placeholder = '[ ]';
-          const m = /\[(\d+)\]/.exec(line.prefix || '');
+          const m = /\[([^\]]*)\]/.exec(line.prefix || '');
           input.value = m ? m[1] : '';
           input.title = '可编辑的前缀数字（留空为无前缀）';
           input.addEventListener('click', (e) => { e.stopPropagation(); });
@@ -506,7 +506,7 @@
       const v = String(value || '').trim();
       const res = await apiFetch('/api/set_prefix', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, prefix_int: v === '' ? '' : v })
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, prefix_int: v === '' ? '[]' : v })
       });
       if (!res.ok) { return; }
       const doc = await res.json(); state.doc = doc; renderDoc();
