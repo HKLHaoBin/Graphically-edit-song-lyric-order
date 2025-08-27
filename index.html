@@ -183,6 +183,7 @@
       <button id="btnImport">导入 .lys</button>
       <button id="btnUndo" disabled>撤销</button>
       <button id="btnRedo" disabled>重做</button>
+      <button id="btnSortLines" disabled>排序歌词行</button>
       <button id="btnExport" disabled>导出 .lys</button>
       <span style="flex:1"></span>
       <input type="file" id="mediaInput" accept="audio/*,video/*" />
@@ -595,6 +596,7 @@
       $('#btnExport').disabled = false;
       $('#btnUndo').disabled = false;
       $('#btnRedo').disabled = false;
+      $('#btnSortLines').disabled = false;
       // 允许在无媒体文件时使用时钟播放
       $('#btnPlayPause').disabled = false;
     }
@@ -627,6 +629,32 @@
       const doc = await res.json();
       state.doc = doc;
       renderDoc();
+    }
+
+    async function sortLines() {
+      if (!state.doc) { setStatus('请先导入文档'); return; }
+      
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version
+      };
+      
+      const res = await apiFetch('/api/sort_lines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('排序失败：' + text);
+        return;
+      }
+      
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+      setStatus('歌词行已按时间顺序排序完成');
     }
 
     // ======== 播放器逻辑 ========
@@ -774,6 +802,7 @@
       $('#btnExport').addEventListener('click', exportLys);
       $('#btnUndo').addEventListener('click', undo);
       $('#btnRedo').addEventListener('click', redo);
+      $('#btnSortLines').addEventListener('click', sortLines);
       $('#btnPlayPause').addEventListener('click', togglePlay);
       $('#mediaInput').addEventListener('change', (e) => {
         const f = e.target.files && e.target.files[0];

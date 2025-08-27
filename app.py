@@ -405,6 +405,61 @@ def api_insert_tokens(payload: Dict[str, Any] = Body(...)):
     REDO_STACK[doc["id"]].clear()
     return doc
 
+@app.post("/api/sort_lines")
+def api_sort_lines(payload: Dict[str, Any] = Body(...)):
+    """
+    按歌词行第一个token的开始时间排序所有歌词行（非meta行）。
+    payload: { document_id, base_version }
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    before = deep_clone(doc)
+    
+    # 分离meta行和歌词行
+    meta_lines = []
+    lyric_lines = []
+    
+    for line in doc["lines"]:
+        if line.get("is_meta"):
+            meta_lines.append(line)
+        else:
+            lyric_lines.append(line)
+    
+    # 提取每行第一个token的开始时间进行排序
+    def get_line_start_time(line):
+        if not line.get("tokens") or len(line["tokens"]) == 0:
+            return float('inf')  # 没有token的行排在最后
+        
+        first_token = line["tokens"][0]
+        ts = first_token.get("ts", "")
+        if not ts or "," not in ts:
+            return float('inf')  # 无效时间戳排在最后
+        
+        try:
+            start_time = int(ts.split(",")[0])
+            return start_time
+        except (ValueError, IndexError):
+            return float('inf')  # 解析失败排在最后
+    
+    # 按开始时间排序歌词行
+    lyric_lines.sort(key=get_line_start_time)
+    
+    # 重新组合行（meta行保持在原位置，歌词行按时间排序）
+    # 这里简单地将meta行放在前面，歌词行按时间顺序放在后面
+    doc["lines"] = meta_lines + lyric_lines
+    
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
 @app.get("/health")
 def health():
     return {"ok": True}
