@@ -5,7 +5,8 @@
       "Bash(start http://localhost:8000)",
       "Bash(curl:*)",
       "Bash(start:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(chcp:*)"
     ],
     "deny": [],
     "ask": []

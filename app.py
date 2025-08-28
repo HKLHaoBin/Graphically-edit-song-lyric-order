@@ -67,13 +67,17 @@ def parse_lys(raw_text: str) -> Dict[str, Any]:
             })
             continue
 
-        # 捕获行前缀（如 [4]）
+        # 捕获行前缀（如 [4] 或 []）
         prefix = ""
         rest = s
         m = LINE_PREFIX_RE.match(s)
         if m:
             prefix = m.group(0)
             rest = s[m.end():]
+        # 支持空括号 []
+        elif s.startswith("[]"):
+            prefix = "[]"
+            rest = s[2:]
 
         # 解析 token
         tokens: List[Dict[str, str]] = []
@@ -345,7 +349,7 @@ def api_set_prefix(payload: Dict[str, Any] = Body(...)):
 
     before = deep_clone(doc)
     if prefix_int is None or str(prefix_int) == "":
-        line["prefix"] = ""
+        line["prefix"] = "[]"
     else:
         try:
             n = int(prefix_int)
