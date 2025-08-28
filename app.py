@@ -466,5 +466,19 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
+    import webbrowser
+    import threading
+    import time
+    
+    # 启动服务器后自动打开浏览器
+    def open_browser():
+        time.sleep(2)  # 等待服务器启动
+        webbrowser.open("http://127.0.0.1:8000")
+    
+    # 创建线程在后台打开浏览器
+    browser_thread = threading.Thread(target=open_browser)
+    browser_thread.daemon = True
+    browser_thread.start()
+    
     # 监听 0.0.0.0 方便局域网访问
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
