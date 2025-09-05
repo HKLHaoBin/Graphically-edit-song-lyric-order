@@ -29,6 +29,8 @@ pip install -r requirements.txt
 python app.py
 ```
 默认监听：`http://localhost:8000`
+- 自动打开浏览器：启动后会自动在默认浏览器中打开编辑器
+- 支持局域网访问：监听 `0.0.0.0:8000`
 
 ### Docker 构建和运行
 ```bash
@@ -42,26 +44,29 @@ docker run -p 8000:8000 lys-editor
 ## 项目结构
 
 ```
-├── app.py              # FastAPI 后端服务器（单文件应用）
-├── index.html          # 前端界面（包含所有CSS和JS）
-├── requirements.txt    # Python 依赖
-├── Dockerfile          # Docker 容器配置
-├── *.lys              # 示例歌词文件
-└── README.md          # 详细使用说明
+├── app.py                 # FastAPI 后端服务器（单文件应用）
+├── index.html             # 前端界面（包含所有CSS和JS）
+├── requirements.txt       # Python 依赖
+├── Dockerfile            # Docker 容器配置
+├── CLAUDE.md             # Claude Code 开发指南
+├── README.md             # 详细使用说明
+├── *.lys                 # 示例歌词文件
+├── sort_lrc.py           # LRC排序脚本（未使用）
+└── 封装后图形化编辑歌词顺序/ # 打包输出目录
 ```
 
 ## 核心API端点
 
 - `GET /` - 返回前端页面
-- `POST /api/import` - 导入 .lys 文件
+- `POST /api/import` - 导入 .lys 文件（返回解析后的文档）
 - `GET /api/lyrics?doc_id=` - 获取文档数据
-- `GET /api/export?doc_id=` - 导出 .lys 文件
-- `POST /api/move` - 拖放移动 token
+- `GET /api/export?doc_id=` - 导出 .lys 文件（保持原格式）
+- `POST /api/move` - 拖放移动 token（支持多选）
 - `POST /api/undo` / `POST /api/redo` - 撤销/重做
-- `POST /api/set_prefix` - 设置行前缀
-- `POST /api/insert_tokens` - 粘贴插入 tokens
+- `POST /api/set_prefix` - 设置行前缀（支持数字或空）
+- `POST /api/insert_tokens` - 粘贴插入 tokens（保留时间戳）
 - `POST /api/newline` - 插入新行
-- `POST /api/sort_lines` - 按时间排序歌词行
+- `POST /api/sort_lines` - 按时间排序歌词行（按首个token开始时间）
 - `GET /health` - 健康检查
 
 ## 关键文件说明
@@ -73,14 +78,16 @@ docker run -p 8000:8000 lys-editor
 - 内存文档管理和版本控制（内存存储，重启丢失）
 - 撤销/重做栈实现
 - 文档版本冲突检测（409错误）
+- 自动浏览器启动功能（多线程）
 
 ### index.html: 前端界面（零依赖原生实现）
 - 原生 JavaScript 实现拖放交互（多选、行级拖放）
 - 播放器逻辑（媒体文件 + 时钟模式）
 - 实时高亮显示（基于时间戳）
-- 复制/粘贴功能（快捷键支持）
+- 复制/粘贴功能（快捷键支持：Ctrl+C/V）
 - 行前缀编辑功能
 - 歌词行排序功能
+- 响应式设计（支持深色/浅色主题）
 
 ## 开发注意事项
 
@@ -92,12 +99,14 @@ docker run -p 8000:8000 lys-editor
 
 ## 测试建议
 
-- 导入示例 .lys 文件进行功能测试
+- 导入示例 `.lys` 文件进行功能测试
 - 测试拖放移动、撤销重做、复制粘贴功能
 - 验证播放器高亮功能（带媒体文件和不带媒体文件）
 - 检查导出文件是否保留原始格式和时间戳
 - 测试版本冲突处理机制
 - 测试歌词行排序功能
+- 验证自动浏览器启动功能
+- 测试深色/浅色主题切换
 
 ## 架构特点
 
