@@ -199,16 +199,102 @@
     </section>
 
     <section class="panel">
-      <h2>用法</h2>
+      <h2>用法说明</h2>
       <div class="box">
-        <p>① <strong>Ctrl/⌘ 多选</strong>歌词块；或只选一个。</p>
-        <p>② 把选中的块<strong>直接拖动</strong>到另一行的某个块上；根据鼠标落点在该块的左半/右半，决定插入到<strong>前面/后面</strong>。</p>
-        <p class="muted">提示：页面不显示时间戳，但时间戳会随 token 一起移动；导出时时间戳会保留。</p>
-        <p>③ 可选加载 <strong>音频/视频</strong> 文件，点击「播放」或空格，歌词将按 (开始时间, 持续时长) 高亮；<strong>单击任意一行</strong>可从该行开始播放。</p>
+        <h3 style="margin-top: 0; color: var(--primary);">🎵 基础操作</h3>
+        <p><strong>选择歌词块：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>单击一个歌词块进行单选</li>
+          <li><strong>Ctrl/⌘ + 点击</strong>进行多选（可跨行选择）</li>
+          <li>点击空白处清空所有选择</li>
+        </ul>
+        
+        <p><strong>拖放调整顺序：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>选中文本块后直接拖动到目标位置</li>
+          <li>拖动到另一个块的左半区：插入到该块前面</li>
+          <li>拖动到另一个块的右半区：插入到该块后面</li>
+          <li>拖动到行的左半区：移动到该行开头</li>
+          <li>拖动到行的右半区：移动到该行结尾</li>
+          <li class="muted">拖放时会有蓝色高亮提示插入位置</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">✏️ 编辑功能</h3>
+        <p><strong>复制粘贴：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>Ctrl+C / Ctrl+V（Mac: ⌘C / ⌘V）复制粘贴</li>
+          <li>可复制单个词块或多选词块</li>
+          <li>可复制整行歌词（先点击行空白处）</li>
+          <li>粘贴到词块右侧或行开头</li>
+        </ul>
+        
+        <p><strong>前缀编辑：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>歌词行左侧的数字前缀可直接编辑</li>
+          <li>输入数字后按 Enter 或点击其他地方确认</li>
+          <li>留空则显示为 []（无前缀）</li>
+        </ul>
+        
+        <p><strong>插入空行：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>双击任意行空白处在该行下方插入新空行</li>
+          <li>新插入的空行可编辑前缀和添加内容</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">🎮 播放控制</h3>
+        <p><strong>播放器功能：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>可选加载 音频/视频 文件进行同步播放</li>
+          <li>点击「播放」按钮或按空格键播放/暂停</li>
+          <li>单击任意一行可从该行开始播放</li>
+          <li>当前播放的歌词行和词块会高亮显示</li>
+          <li>不加载媒体文件时使用时钟模式播放</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">🛠️ 高级功能</h3>
+        <p><strong>撤销重做：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>使用「撤销」和「重做」按钮恢复操作</li>
+          <li>支持多步撤销和重做</li>
+        </ul>
+        
+        <p><strong>歌词行排序：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>点击「排序歌词行」按开始时间自动排序</li>
+          <li>保留原有时间戳，只调整行的先后顺序</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">📁 文件支持</h3>
+        <p><strong>导入格式：</strong> .lys、.lrc、.txt 文件</p>
+        <p><strong>导出格式：</strong> 保持原始 .lys 格式，时间戳完整保留</p>
+        <p class="muted">💡 提示：页面不显示时间戳，但所有操作都会保留原时间戳；导出时时间戳会完整保留。</p>
+        
+        <h3 style="color: var(--primary);">⌨️ 快捷键</h3>
+        <div style="background: var(--primary-50); padding: 12px; border-radius: 8px; margin-top: 12px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+C / ⌘C</td>
+              <td style="padding: 6px 8px; color: var(--muted);">复制选中的歌词内容</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+V / ⌘V</td>
+              <td style="padding: 6px 8px; color: var(--muted);">粘贴到选中的位置</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Space (空格)</td>
+              <td style="padding: 6px 8px; color: var(--muted);">播放/暂停</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+点击 / ⌘+点击</td>
+              <td style="padding: 6px 8px; color: var(--muted);">多选歌词块</td>
+            </tr>
+          </table>
+        </div>
       </div>
       <div id="status"></div>
     </section>
   </main>
+
 
   <script>
     const $ = (sel) => document.querySelector(sel);
