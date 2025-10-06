@@ -515,6 +515,65 @@ def api_shift_line(payload: Dict[str, Any] = Body(...)):
     REDO_STACK[doc["id"]].clear()
     return doc
 
+
+@app.post("/api/set_last_token_duration")
+def api_set_last_token_duration(payload: Dict[str, Any] = Body(...)):
+    """
+    将某一行中"最后一个带时间戳的 token"的持续时间设置为给定值（毫秒）。
+    payload: { document_id, base_version, line_id, duration_ms: int>=0 }
+    仅修改 duration，不改变 start。
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    try:
+        new_dur = int(payload.get("duration_ms"))
+    except Exception:
+        raise HTTPException(400, "duration_ms must be an integer")
+    if new_dur < 0:
+        raise HTTPException(400, "duration_ms must be >= 0")
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    li, line = find_line(doc, line_id)
+    if line.get("is_meta"):
+        raise HTTPException(400, "cannot modify meta line")
+    if not line.get("tokens"):
+        raise HTTPException(400, "line has no tokens")
+
+    # 从后往前找最后一个带合法时间戳的 token
+    last_tok = None
+    last_start = None
+    for t in reversed(line["tokens"]):
+        ts = (t.get("ts") or "").strip()
+        if "," not in ts:
+            continue
+        try:
+            s_str, d_str = ts.split(",", 1)
+            s = int(s_str)
+            # d = int(d_str)  # 原持续时间用不到
+        except Exception:
+            continue
+        last_tok = t
+        last_start = s
+        break
+
+    if last_tok is None or last_start is None:
+        raise HTTPException(400, "no valid timestamp token in this line")
+
+    before = deep_clone(doc)
+    # 仅替换 duration
+    last_tok["ts"] = f"{last_start},{new_dur}"
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
 @app.get("/health")
 def health():
     return {"ok": True}

@@ -185,6 +185,7 @@
       <button id="btnRedo" disabled>重做</button>
       <button id="btnSortLines" disabled>排序歌词行</button>
       <button id="btnExport" disabled>导出 .lys</button>
+      <button id="btnUndoImport" style="display:none;">撤销导入</button>
       <span style="flex:1"></span>
       <!-- 新增：按键延迟(ms) 设置 -->
       <label class="muted" style="display:flex; align-items:center; gap:6px;">
@@ -296,6 +297,12 @@
                 让"选中行"的歌词从此刻开始（含按键延迟）
               </td>
             </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">H</td>
+              <td style="padding: 6px 8px; color: var(--muted);">
+                让"选中行"的最后一个字在此刻结束（只改持续时间）
+              </td>
+            </tr>
             <tr>
               <td style="padding: 6px 8px; font-weight: 600;">Ctrl+点击 / ⌘+点击</td>
               <td style="padding: 6px 8px; color: var(--muted);">多选歌词块</td>
@@ -312,6 +319,7 @@
     const $ = (sel) => document.querySelector(sel);
     // API 基址（默认同源）。可在部署到 GitHub Pages 时，通过注入 window.API_BASE 或设置 <meta name="api-base" content="..."> 来指定后端域名。
     const API_BASE = (window.API_BASE || (document.querySelector('meta[name="api-base"]')?.content || '')).replace(/\/$/, '');
+    const BASE_TITLE = document.title;
     const apiUrl = (path) => API_BASE + path;
     const apiFetch = (path, init) => fetch(apiUrl(path), init);
 
@@ -333,7 +341,12 @@
         clockStartOffset: 0, // ms
       },
       tokenCache: [], // [{id, lineId, start, end, el}]
+      // 页面状态
+      unsaved: false,                // 是否有未保存变更（用于关闭确认）
+      lastImportBackup: null,        // { doc, selectedTokenIds, selectedLineId, unsaved }
     };
+
+    const hasDocData = () => !!(state.doc && Array.isArray(state.doc.lines) && state.doc.lines.length > 0);
 
     function setStatus(msg) {
       $('#status').textContent = msg || '';
@@ -343,6 +356,9 @@
       const c = $('#lines');
       c.innerHTML = '';
       if (!state.doc) return;
+      // 标题上的小圆点提示（有无变更）
+      document.title = (state.unsaved ? '● ' : '') + BASE_TITLE;
+
       $('#docInfo').textContent = `DocID: ${state.doc.id} — version: ${state.doc.version} — 行数: ${state.doc.lines.length}`;
 
       state.tokenCache = [];
@@ -369,6 +385,9 @@
             e.stopPropagation();
           });
           input.addEventListener('blur', async () => { await commitPrefix(line.id, input.value); });
+          input.addEventListener('focus', () => {              // ✅ 新增
+            state.selectedLineId = line.id;
+          });
           preWrap.appendChild(input);
           lineDiv.appendChild(preWrap);
         } else if (line.prefix) {
@@ -460,20 +479,40 @@
           lineDiv.appendChild(span);
         });
 
-        // 行级交互：选择行、行级拖放（到头/尾）、双击插入空行
+        // —— 单/双/三击：1=只选中；2=跳转播放；>=3=在该行后新建空行 —— //
         if (!line.is_meta) {
           lineDiv.addEventListener('click', (e) => {
+            // 点到 token 或前缀输入框时，不走行级点击
             if (e.target.classList.contains('tok') || e.target.classList.contains('prefix-editor')) return;
-            state.selectedTokenIds.clear();
-            state.selectedLineId = line.id;
-            renderDoc();
-            // 单击行：从该行开始播放
-            startFromLine(line.id);
-          });
+            e.stopPropagation();
 
-          lineDiv.addEventListener('dblclick', async (e) => {
-            e.preventDefault();
-            await insertEmptyLineBelow(line.id);
+            const CLICK_DECISION_DELAY = 300; // ms，用于区分双击/三击
+
+            // 在 DOM 节点上做一个简单的点击计数器
+            if (lineDiv._clickTimer) clearTimeout(lineDiv._clickTimer);
+            lineDiv._clickCount = (lineDiv._clickCount || 0) + 1;
+
+            lineDiv._clickTimer = setTimeout(async () => {
+              const count = lineDiv._clickCount || 0;
+              lineDiv._clickCount = 0;
+              lineDiv._clickTimer = null;
+
+              if (count >= 3) {
+                // 三击：在此行后新建空行
+                await createEmptyLineAfter(line.id);
+              } else if (count === 2) {
+                // 双击：选中并跳转播放
+                state.selectedTokenIds.clear();
+                state.selectedLineId = line.id;
+                renderDoc();
+                startFromLine(line.id); // ← 原本单击触发的"跳转"，移到双击里
+              } else {
+                // 单击：只选中该行，不跳转
+                state.selectedTokenIds.clear();
+                state.selectedLineId = line.id;
+                renderDoc();
+              }
+            }, CLICK_DECISION_DELAY);
           });
 
           lineDiv.addEventListener('dragover', (e) => {
@@ -573,6 +612,7 @@
       state.selectedTokenIds.clear();
       renderDoc();
       setStatus('已完成拖放移动。');
+      markDirty();
     }
 
     async function doDropMoveLine({ lineId, position }) {
@@ -594,6 +634,44 @@
       state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已完成拖放移动。');
     }
 
+    async function createEmptyLineAfter(afterLineId) {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 记录变更前的行 id 集合，用来找出"新行"的 id
+      const beforeIds = new Set(state.doc.lines.map(l => l.id));
+
+      const res = await apiFetch('/api/newline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document_id: state.doc.id,
+          base_version: state.doc.version,
+          insert_after_line_id: afterLineId
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('创建空行失败：' + text);
+        return;
+      }
+
+      const newDoc = await res.json();
+      // 找出新增的那一行 id
+      let newLineId = null;
+      for (const l of newDoc.lines) {
+        if (!beforeIds.has(l.id)) { newLineId = l.id; break; }
+      }
+
+      state.doc = newDoc;
+      state.selectedTokenIds.clear();
+      state.selectedLineId = newLineId || afterLineId; // 兜底：找不到就选原行
+      renderDoc();
+
+      setStatus('已在该行后创建空行');
+      markDirty();
+    }
+
     async function insertEmptyLineBelow(afterLineId) {
       const res = await apiFetch('/api/newline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -601,6 +679,7 @@
       });
       if (!res.ok) { const text = await res.text(); setStatus('插入空行失败：' + text); return; }
       const doc = await res.json(); state.doc = doc; renderDoc(); setStatus('已插入空行。');
+      markDirty();
     }
 
     async function commitPrefix(lineId, value) {
@@ -612,6 +691,7 @@
       });
       if (!res.ok) { return; }
       const doc = await res.json(); state.doc = doc; renderDoc();
+      markDirty();
     }
 
     function collectSelectedTokens() {
@@ -679,10 +759,27 @@
       });
       if (!res.ok) { const text = await res.text(); setStatus('粘贴失败：' + text); return; }
       const doc = await res.json(); state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已粘贴。');
+      markDirty();
     }
 
     // ---- 基础 API 调用（导入、导出、撤销、重做） ----
     async function importLys(file) {
+      // 若已有数据，先询问；允许撤销本次导入
+      if (hasDocData()) {
+        const ok = confirm('当前页面已有数据，导入新文件将替换当前文档。\n确定继续？\n（提示：导入后可点击"撤销导入"恢复）');
+        if (!ok) { setStatus('已取消导入'); return; }
+        // 记录导入前快照，以便撤销导入
+        state.lastImportBackup = {
+          doc: state.doc,
+          selectedLineId: state.selectedLineId,
+          selectedTokenIds: new Set(state.selectedTokenIds),
+          unsaved: state.unsaved,
+        };
+        $('#btnUndoImport').style.display = 'inline-block';
+      } else {
+        state.lastImportBackup = null;
+        $('#btnUndoImport').style.display = 'none';
+      }
       const fd = new FormData();
       fd.append('file', file);
       const res = await apiFetch('/api/import', { method: 'POST', body: fd });
@@ -700,6 +797,8 @@
       $('#btnSortLines').disabled = false;
       // 允许在无媒体文件时使用时钟播放
       $('#btnPlayPause').disabled = false;
+      // 导入视为新基线，清除未保存标记
+      clearDirty();
     }
 
     async function exportLys() {
@@ -712,6 +811,29 @@
       a.download = 'edited.lys';
       a.click();
       URL.revokeObjectURL(a.href);
+      clearDirty();
+    }
+
+    function undoImport() {
+      if (!state.lastImportBackup) { setStatus('没有可撤销的导入'); return; }
+      const b = state.lastImportBackup;
+      state.doc = b.doc;
+      state.selectedLineId = b.selectedLineId || null;
+      state.selectedTokenIds = new Set(b.selectedTokenIds || []);
+      state.unsaved = !!b.unsaved;
+      renderDoc();
+      $('#btnUndoImport').style.display = 'none';
+      setStatus('已撤销导入，恢复到导入前的文档。');
+    }
+
+    function markDirty() {
+      state.unsaved = true;
+      // 有数据即拦截关闭，这里不额外设置；统一在 beforeunload 回调里判断
+      renderDoc(); // 刷新标题提示小圆点
+    }
+    function clearDirty() {
+      state.unsaved = false;
+      renderDoc();
     }
 
     async function undo() {
@@ -721,6 +843,7 @@
       const doc = await res.json();
       state.doc = doc;
       renderDoc();
+      markDirty();
     }
 
     async function redo() {
@@ -730,6 +853,7 @@
       const doc = await res.json();
       state.doc = doc;
       renderDoc();
+      markDirty();
     }
 
     async function sortLines() {
@@ -756,6 +880,7 @@
       state.doc = doc;
       renderDoc();
       setStatus('歌词行已按时间顺序排序完成');
+      markDirty();
     }
 
     // ======== 播放器逻辑 ========
@@ -888,6 +1013,63 @@
       });
     }
 
+    // ✅ 新增：优先以"选中的最靠前词所在行"为目标；否则回退到选中行
+    async function alignSelectedToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 1) 若有选中 token，则取文档顺序最靠前的那个
+      const sels = collectSelectedTokens();
+      let lineId = null;
+      if (sels.length > 0) {
+        lineId = sels[0].line_id;
+      } else if (state.selectedLineId) {
+        // 2) 否则用选中的行
+        lineId = state.selectedLineId;
+      } else {
+        setStatus('请先选中一个词或点击选中一行');
+        return;
+      }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可对齐（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可对齐的歌词'); return; }
+
+      // —— 取"该行中第一个有合法时间戳的词"的开始时间（顺序扫描）
+      let firstStart = null;
+      for (const t of line.tokens) {
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const s = parseInt(ts.split(',')[0], 10);
+        if (Number.isFinite(s)) { firstStart = s; break; }
+      }
+      if (!Number.isFinite(firstStart)) { setStatus('该行没有合法时间戳可对齐'); return; }
+
+      const now = getNowMs();
+      const delay = Number(state.settings.keyDelayMs || 0);
+      const delta = Math.round((now + delay) - firstStart);
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        delta_ms: delta
+      };
+
+      const res = await apiFetch('/api/shift_line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('对齐失败：' + text); return; }
+
+      state.doc = await res.json();
+      renderDoc();
+      const sign = delta >= 0 ? '+' : '';
+      setStatus(`已对齐：以该行第一个词为参照（延迟 ${delay|0}ms，Δ=${sign}${delta}ms）。`);
+      markDirty();
+    }
+
+    // 旧函数可保留作为后备
     async function alignSelectedLineToNow() {
       if (!state.doc) { setStatus('请先导入 .lys'); return; }
       const lineId = state.selectedLineId;
@@ -936,6 +1118,64 @@
 
       const sign = delta >= 0 ? '+' : '';
       setStatus(`已对齐该行到当前时间（延迟 ${delay|0}ms，Δ=${sign}${delta}ms）。`);
+      markDirty();
+    }
+
+    async function setLastTokenDurationToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 只接受"选中行"。若未选中行，尝试从所选 token 推断其所在行（兜底）。
+      let lineId = state.selectedLineId;
+      if (!lineId) {
+        const sels = collectSelectedTokens();
+        if (sels.length > 0) {
+          lineId = sels[sels.length - 1].line_id; // 取最后一个所选 token 所在行
+        } else {
+          setStatus('请先选中一行（点击行空白处即可选中该行）');
+          return;
+        }
+      }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可操作（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可操作的歌词'); return; }
+
+      // 从后往前找"最后一个带合法时间戳"的 token
+      let lastTok = null;
+      let startMs = null;
+      for (let i = line.tokens.length - 1; i >= 0; i--) {
+        const t = line.tokens[i];
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const s = parseInt(ts.split(',')[0], 10);
+        if (Number.isFinite(s)) { lastTok = t; startMs = s; break; }
+      }
+      if (!lastTok || !Number.isFinite(startMs)) { setStatus('该行没有合法时间戳可设置'); return; }
+
+      const now = getNowMs();                // 当前播放时间（媒体或时钟）
+      const newDur = Math.max(0, Math.round(now - startMs));  // 只改持续时间
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        duration_ms: newDur
+      };
+
+      const res = await apiFetch('/api/set_last_token_duration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('设置失败：' + text);
+        return;
+      }
+      state.doc = await res.json();
+      renderDoc();
+      setStatus(`已设置：最后一字持续 ${newDur}ms（start=${startMs}ms → end=${startMs + newDur}ms）`);
+      markDirty();
     }
 
     function init() {
@@ -949,6 +1189,8 @@
           setStatus(String(e));
         }
       });
+      // 撤销导入
+      $('#btnUndoImport').addEventListener('click', undoImport);
 
       $('#btnExport').addEventListener('click', exportLys);
       $('#btnUndo').addEventListener('click', undo);
@@ -960,9 +1202,9 @@
         if (f) loadMediaFile(f);
       });
 
-      // 点击空白处清空选择
+      // ✅ 只在点击容器真正的空白处（不在任何 .line 内部）时清空选择
       $('#lines').addEventListener('click', (e) => {
-        if (e.target.classList.contains('tok') || e.target.classList.contains('prefix-editor')) return;
+        if (e.target.closest('.line')) return;  // ← 在某一行内部就别清
         state.selectedTokenIds.clear();
         state.selectedLineId = null;
         renderDoc();
@@ -998,19 +1240,33 @@
         if (pasteCombo) { e.preventDefault(); await handlePaste(); }
         // 空格 播放/暂停
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-        // F：让"选中行"从此刻开始（包含按键延迟）
+        // F：让"选中的第一个词所在行"或"选中行"从此刻开始（包含按键延迟）
         if (!e.repeat && e.key.toLowerCase() === 'f') {
-          // 若正在编辑输入框则不触发
           const tag = (e.target && e.target.tagName) || '';
           if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
-
           e.preventDefault();
-          await alignSelectedLineToNow();
+          await alignSelectedToNow();    // ← 改成这个
+        }
+        // 👉 新增：H 键——把选中行的"最后一个字"结束到此刻（只改持续时间）
+        if (!e.repeat && e.key.toLowerCase() === 'h') {
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+          e.preventDefault();
+          await setLastTokenDurationToNow();
         }
       });
 
       // 初始：若未加载媒体，也允许时钟播放（但需导入 doc 后才能播放）
       $('#btnPlayPause').disabled = true;
+
+      // 关闭/刷新询问：页面只要存在数据就询问
+      window.addEventListener('beforeunload', (e) => {
+        if (hasDocData()) {
+          e.preventDefault();
+          e.returnValue = '';
+          return '';
+        }
+      });
     }
 
     document.addEventListener('DOMContentLoaded', init);
