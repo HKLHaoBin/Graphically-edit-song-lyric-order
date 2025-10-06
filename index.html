@@ -186,6 +186,12 @@
       <button id="btnSortLines" disabled>排序歌词行</button>
       <button id="btnExport" disabled>导出 .lys</button>
       <span style="flex:1"></span>
+      <!-- 新增：按键延迟(ms) 设置 -->
+      <label class="muted" style="display:flex; align-items:center; gap:6px;">
+        延迟(ms)
+        <input id="keyDelayInput" type="number" step="1" placeholder="0"
+               style="width:90px; padding:4px 6px; border:1px dashed var(--border); border-radius:6px;">
+      </label>
       <input type="file" id="mediaInput" accept="audio/*,video/*" />
       <button id="btnPlayPause" disabled>播放</button>
     </div>
@@ -284,6 +290,12 @@
               <td style="padding: 6px 8px; font-weight: 600;">Space (空格)</td>
               <td style="padding: 6px 8px; color: var(--muted);">播放/暂停</td>
             </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">F</td>
+              <td style="padding: 6px 8px; color: var(--muted);">
+                让"选中行"的歌词从此刻开始（含按键延迟）
+              </td>
+            </tr>
             <tr>
               <td style="padding: 6px 8px; font-weight: 600;">Ctrl+点击 / ⌘+点击</td>
               <td style="padding: 6px 8px; color: var(--muted);">多选歌词块</td>
@@ -308,6 +320,9 @@
       selectedTokenIds: new Set(),
       selectedLineId: null, // 选中的整行（用于行级复制/粘贴）
       clipboard: null,      // { tokens: [{text, ts}], fromLineId }
+      settings: {
+        keyDelayMs: 0,
+      },
       // 播放相关
       playback: {
         usingMedia: false,
@@ -873,6 +888,56 @@
       });
     }
 
+    async function alignSelectedLineToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+      const lineId = state.selectedLineId;
+      if (!lineId) { setStatus('请先选中一整行（点击行空白处即可选中该行）'); return; }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可对齐（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可对齐的歌词'); return; }
+
+      // 找到该行"首个"合法时间戳的开始时间（取最小 start）
+      let firstStart = Infinity;
+      for (const t of line.tokens) {
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const parts = ts.split(',');
+        const s = parseInt(parts[0], 10);
+        if (Number.isFinite(s)) firstStart = Math.min(firstStart, s);
+      }
+      if (!Number.isFinite(firstStart)) { setStatus('该行没有合法时间戳可对齐'); return; }
+
+      const now = getNowMs();
+      const delay = Number(state.settings.keyDelayMs || 0);
+      const delta = Math.round((now + delay) - firstStart); // 让 firstStart 对齐到 now+delay
+
+      // Δ 为 0 也允许提交，以便进入撤销栈；但做个提示
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        delta_ms: delta
+      };
+
+      const res = await apiFetch('/api/shift_line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('对齐失败：' + text);
+        return;
+      }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+
+      const sign = delta >= 0 ? '+' : '';
+      setStatus(`已对齐该行到当前时间（延迟 ${delay|0}ms，Δ=${sign}${delta}ms）。`);
+    }
+
     function init() {
       $('#btnImport').addEventListener('click', async () => {
         const f = $('#fileInput').files[0];
@@ -903,6 +968,27 @@
         renderDoc();
       });
 
+      // —— 按键延迟设置 —— //
+      const delayInput = $('#keyDelayInput');
+      // 读取本地保存
+      const savedDelay = parseInt(localStorage.getItem('keyDelayMs') || '0', 10);
+      if (Number.isFinite(savedDelay)) {
+        state.settings.keyDelayMs = savedDelay;
+        delayInput.value = String(savedDelay);
+      }
+      // 变更即保存
+      delayInput.addEventListener('change', () => {
+        const v = parseInt(delayInput.value, 10);
+        if (Number.isFinite(v)) {
+          state.settings.keyDelayMs = v;
+          localStorage.setItem('keyDelayMs', String(v));
+        } else {
+          state.settings.keyDelayMs = 0;
+          delayInput.value = '';
+          localStorage.removeItem('keyDelayMs');
+        }
+      });
+
       // 键盘复制/粘贴
       document.addEventListener('keydown', async (e) => {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC')>=0;
@@ -912,6 +998,15 @@
         if (pasteCombo) { e.preventDefault(); await handlePaste(); }
         // 空格 播放/暂停
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        // F：让"选中行"从此刻开始（包含按键延迟）
+        if (!e.repeat && e.key.toLowerCase() === 'f') {
+          // 若正在编辑输入框则不触发
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+
+          e.preventDefault();
+          await alignSelectedLineToNow();
+        }
       });
 
       // 初始：若未加载媒体，也允许时钟播放（但需导入 doc 后才能播放）

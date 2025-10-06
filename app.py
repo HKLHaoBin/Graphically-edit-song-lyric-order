@@ -425,40 +425,91 @@ def api_sort_lines(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(409, "version conflict")
 
     before = deep_clone(doc)
-    
+
     # 分离meta行和歌词行
     meta_lines = []
     lyric_lines = []
-    
+
     for line in doc["lines"]:
         if line.get("is_meta"):
             meta_lines.append(line)
         else:
             lyric_lines.append(line)
-    
+
     # 提取每行第一个token的开始时间进行排序
     def get_line_start_time(line):
         if not line.get("tokens") or len(line["tokens"]) == 0:
             return float('inf')  # 没有token的行排在最后
-        
+
         first_token = line["tokens"][0]
         ts = first_token.get("ts", "")
         if not ts or "," not in ts:
             return float('inf')  # 无效时间戳排在最后
-        
+
         try:
             start_time = int(ts.split(",")[0])
             return start_time
         except (ValueError, IndexError):
             return float('inf')  # 解析失败排在最后
-    
+
     # 按开始时间排序歌词行
     lyric_lines.sort(key=get_line_start_time)
-    
+
     # 重新组合行（meta行保持在原位置，歌词行按时间排序）
     # 这里简单地将meta行放在前面，歌词行按时间顺序放在后面
     doc["lines"] = meta_lines + lyric_lines
-    
+
+    doc["version"] += 1
+    UNDO_STACK[doc["id"]].append(before)
+    REDO_STACK[doc["id"]].clear()
+    return doc
+
+
+@app.post("/api/shift_line")
+def api_shift_line(payload: Dict[str, Any] = Body(...)):
+    """
+    将某一整行的所有 token 开始时间整体平移（单位：毫秒）。
+    payload: { document_id, base_version, line_id, delta_ms: int }
+    其中 delta_ms 可为负，表示向前移动；处理时会把 start<0 的值钳到 0。
+    """
+    document_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    try:
+        delta_ms = int(payload.get("delta_ms") or 0)
+    except Exception:
+        raise HTTPException(400, "delta_ms must be an integer")
+
+    doc = DB_DOCS.get(document_id)
+    if not doc:
+        raise HTTPException(404, "document not found")
+    if doc["version"] != base_version:
+        raise HTTPException(409, "version conflict")
+
+    li, line = find_line(doc, line_id)
+    if line.get("is_meta"):
+        raise HTTPException(400, "cannot shift meta line")
+
+    before = deep_clone(doc)
+    changed = False
+
+    for tok in line.get("tokens", []):
+        ts = (tok.get("ts") or "").strip()
+        if "," not in ts:
+            continue
+        try:
+            s_str, d_str = ts.split(",", 1)
+            s, d = int(s_str), int(d_str)
+        except Exception:
+            continue
+        new_start = s + delta_ms
+        if new_start < 0:
+            new_start = 0
+        if new_start != s:
+            tok["ts"] = f"{new_start},{d}"
+            changed = True
+
+    # 即使没有变化也允许进入撤销栈，保持一致的操作模型
     doc["version"] += 1
     UNDO_STACK[doc["id"]].append(before)
     REDO_STACK[doc["id"]].clear()
