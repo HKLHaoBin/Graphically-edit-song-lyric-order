@@ -1,0 +1,93 @@
+{
+ "version": "auto-py-to-exe-configuration_v1",
+ "pyinstallerOptions": [
+  {
+   "optionDest": "noconfirm",
+   "value": true
+  },
+  {
+   "optionDest": "filenames",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/app.py"
+  },
+  {
+   "optionDest": "onefile",
+   "value": true
+  },
+  {
+   "optionDest": "console",
+   "value": true
+  },
+  {
+   "optionDest": "clean_build",
+   "value": false
+  },
+  {
+   "optionDest": "strip",
+   "value": false
+  },
+  {
+   "optionDest": "noupx",
+   "value": false
+  },
+  {
+   "optionDest": "disable_windowed_traceback",
+   "value": false
+  },
+  {
+   "optionDest": "uac_admin",
+   "value": false
+  },
+  {
+   "optionDest": "uac_uiaccess",
+   "value": false
+  },
+  {
+   "optionDest": "argv_emulation",
+   "value": false
+  },
+  {
+   "optionDest": "bootloader_ignore_signals",
+   "value": false
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/index.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/app.py;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/index.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/requirements.txt;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/sort_lrc.py;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/\u7ffb\u8bd1.lrc;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/\u5929\u5929\u5929\u56fd\u5730\u7344\u56fd - Aiobahn +81 _ Nanahira _ P\u4e38\u69d8\uff61.lys;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/__pycache__;__pycache__/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u6b4c\u8bcd/\u56fe\u5f62\u5316\u7f16\u8f91\u6b4c\u8bcd\u987a\u5e8f/__pycache__/app.cpython-310.pyc;."
+  }
+ ],
+ "nonPyinstallerOptions": {
+  "increaseRecursionLimit": true,
+  "manualArguments": ""
+ }
+}
