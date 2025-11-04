@@ -306,6 +306,22 @@
                 让"选中行"的最后一个字在此刻结束（只改持续时间）
               </td>
             </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">W</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀清空为 []</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">A</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 4</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">S</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 6</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">D</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 5</td>
+            </tr>
             <tr>
               <td style="padding: 6px 8px; font-weight: 600;">Ctrl+点击 / ⌘+点击</td>
               <td style="padding: 6px 8px; color: var(--muted);">多选歌词块</td>
@@ -731,6 +747,59 @@
       }
       setStatus('没有可复制的内容');
       return false;
+    }
+
+    function resolveActiveLineId() {
+      if (!state.doc) return null;
+      if (state.selectedLineId) return state.selectedLineId;
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        return sels[0].line_id;
+      }
+      return null;
+    }
+
+    async function setSelectedLineQuickPrefix(prefixValue) {
+      const lineId = resolveActiveLineId();
+      if (!lineId) {
+        setStatus('请先选中要调整前缀的歌词行。');
+        return;
+      }
+      const currentLineIndex = state.doc.lines.findIndex((ln) => ln.id === lineId);
+      if (currentLineIndex === -1) {
+        setStatus('未找到目标歌词行。');
+        return;
+      }
+      const line = state.doc.lines[currentLineIndex];
+      if (!line || line.is_meta) {
+        setStatus('该快捷键仅适用于普通歌词行。');
+        return;
+      }
+      const current = line.prefix ? (/\[([^\]]*)\]/.exec(line.prefix || '')?.[1] ?? '') : '';
+      const desired = (prefixValue === null || typeof prefixValue === 'undefined') ? '' : String(prefixValue);
+      const nextLineId = (() => {
+        for (let i = currentLineIndex + 1; i < state.doc.lines.length; i++) {
+          const candidate = state.doc.lines[i];
+          if (!candidate.is_meta) return candidate.id;
+        }
+        return null;
+      })();
+      const displayValue = desired === '' ? '[]' : desired;
+      if (current === desired) {
+        state.selectedLineId = nextLineId || lineId;
+        state.selectedTokenIds.clear();
+        renderDoc();
+        setStatus(`该行前缀已是 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行' }。`);
+        return;
+      }
+      state.selectedLineId = lineId;
+      await commitPrefix(lineId, desired);
+      if (nextLineId) {
+        state.selectedLineId = nextLineId;
+      }
+      state.selectedTokenIds.clear();
+      renderDoc();
+      setStatus(`已将该行前缀设置为 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行' }。`);
     }
 
     async function handlePaste() {
@@ -1237,21 +1306,30 @@
       // 键盘复制/粘贴
       document.addEventListener('keydown', async (e) => {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC')>=0;
-        const copyCombo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'c';
-        const pasteCombo = (isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'v';
+        const key = e.key.toLowerCase();
+        const copyCombo = (isMac ? e.metaKey : e.ctrlKey) && key === 'c';
+        const pasteCombo = (isMac ? e.metaKey : e.ctrlKey) && key === 'v';
         if (copyCombo) { e.preventDefault(); handleCopy(); }
         if (pasteCombo) { e.preventDefault(); await handlePaste(); }
         // 空格 播放/暂停
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
         // F：让"选中的第一个词所在行"或"选中行"从此刻开始（包含按键延迟）
-        if (!e.repeat && e.key.toLowerCase() === 'f') {
+        const prefixKeyMap = { w: '', a: '4', s: '6', d: '5' };
+        if (!e.repeat && Object.prototype.hasOwnProperty.call(prefixKeyMap, key)) {
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+          e.preventDefault();
+          await setSelectedLineQuickPrefix(prefixKeyMap[key]);
+          return;
+        }
+        if (!e.repeat && key === 'f') {
           const tag = (e.target && e.target.tagName) || '';
           if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
           e.preventDefault();
           await alignSelectedToNow();    // ← 改成这个
         }
         // 👉 新增：H 键——把选中行的"最后一个字"结束到此刻（只改持续时间）
-        if (!e.repeat && e.key.toLowerCase() === 'h') {
+        if (!e.repeat && key === 'h') {
           const tag = (e.target && e.target.tagName) || '';
           if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
           e.preventDefault();
