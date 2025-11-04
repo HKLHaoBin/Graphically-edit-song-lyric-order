@@ -789,7 +789,7 @@
         state.selectedLineId = nextLineId || lineId;
         state.selectedTokenIds.clear();
         renderDoc();
-        setStatus(`该行前缀已是 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行' }。`);
+        setStatus(`该行前缀已是 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行'}。`);
         return;
       }
       state.selectedLineId = lineId;
@@ -799,7 +799,7 @@
       }
       state.selectedTokenIds.clear();
       renderDoc();
-      setStatus(`已将该行前缀设置为 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行' }。`);
+      setStatus(`已将该行前缀设置为 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行'}。`);
     }
 
     async function handlePaste() {
